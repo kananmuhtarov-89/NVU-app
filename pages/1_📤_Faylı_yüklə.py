@@ -20,14 +20,14 @@ def norm(s: str) -> str:
 
 def robust_to_datetime(series: pd.Series) -> pd.Series:
     """
-    1) ISO 'YYYY-MM-DD HH:MM:SS' (sənin R formatın) STRİCT
+    1) ISO 'YYYY-MM-DD HH:MM:SS' (R üçün tipik) – STRICT
     2) General parser (dayfirst=True)
     3) Excel serial fallback
     """
     s = series.copy()
     s_str = s.astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
 
-    # strict ISO datetime first (R üçün əsas)
+    # strict ISO datetime first
     dt = pd.to_datetime(s_str, format="%Y-%m-%d %H:%M:%S", errors="coerce")
 
     # generic fallback
@@ -117,13 +117,13 @@ if uploaded:
     coverage["R"],  r_min,  r_max  = cov_min_max("dt_R")
     coverage["AB"], ab_min, ab_max = cov_min_max("dt_AB")
     coverage["AF"], af_min, af_max = cov_min_max("dt_AF")
-    coverage["KOMPOZIT"], k_min, k_max = cov_min_max("dt_KOMPOZIT")
+    coverage["KOMPOZIT"], k_min, k_max = cov_min_max("dt_KOMPOZIT")  # <-- daxili açar: KOMPOZIT
 
     minmax = {
         "R": {"min": r_min, "max": r_max},
         "AB": {"min": ab_min, "max": ab_max},
         "AF": {"min": af_min, "max": af_max},
-        "KOMPOZIT": {"min": k_min, "max": k_max},
+        "KOMPOZIT": {"min": k_min, "max": k_max},  # <-- eyni açar
     }
 
     # 8) Session state
@@ -139,10 +139,10 @@ if uploaded:
     st.caption("Tarix sütunlarının əhatəsi və min/max dəyərləri:")
 
     rows = [
-        {"Mənbə": "R — Müraciət üzrə son əməliyyat tarixi", "Sütun (ad)": col_R,  "Dolu %": coverage["R"],  "Min": r_min,  "Max": r_max},
-        {"Mənbə": "AB — Təhvil-təslim üzrə son əməliyyat",   "Sütun (ad)": col_AB, "Dolu %": coverage["AB"], "Min": ab_min, "Max": ab_max},
-        {"Mənbə": "AF — Təsdiqedici sənəd üzrə son əməliyyat","Sütun (ad)": col_AF, "Dolu %": coverage["AF"], "Min": af_min, "Max": af_max},
-        {"Mənbə": "KOMPOZİT — ən son əməliyyat",             "Sütun (ad)": "max(R,AB,AF)", "Dolu %": coverage["KOMPOZİT"], "Min": k_min, "Max": k_max},
+        {"Mənbə": "R — Müraciət üzrə son əməliyyat tarixi", "Sütun (ad)": col_R,  "Dolu %": coverage["R"],        "Min": r_min,  "Max": r_max},
+        {"Mənbə": "AB — Təhvil-təslim üzrə son əməliyyat",   "Sütun (ad)": col_AB, "Dolu %": coverage["AB"],       "Min": ab_min, "Max": ab_max},
+        {"Mənbə": "AF — Təsdiqedici sənəd üzrə son əməliyyat","Sütun (ad)": col_AF, "Dolu %": coverage["AF"],       "Min": af_min, "Max": af_max},
+        {"Mənbə": "KOMPOZİT — ən son əməliyyat",             "Sütun (ad)": "max(R,AB,AF)", "Dolu %": coverage["KOMPOZIT"], "Min": k_min, "Max": k_max},
     ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
