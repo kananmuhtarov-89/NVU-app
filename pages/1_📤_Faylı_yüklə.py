@@ -155,11 +155,12 @@ if uploaded:
 
     # 2) Dublikatları təmizlə (sənin qaydana görə)
     df = dedup_dataframe(
-        df_raw,
-        "Təhvil aktının seriya nömrəsi",
-        "Təsdiqedici sənədin seriyası",
-        "NV qeydiyyat nömrəsi",
-    ).copy()
+    df_raw,
+    "Təhvil aktının seriya nömrəsi",
+    "Təsdiqedici sənədin seriyası",
+    "NV qeydiyyat nömrəsi",
+    keep="last",   # <-- bunu əlavə et
+).copy()
 
     # 3) Xəritələmə: əvvəl başlıqla, sonra keyword, sonra hərflə (R/W/AB/AF/AM)
     coverage, minmax, resolved_cols = {}, {}, {}
