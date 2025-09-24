@@ -6,7 +6,6 @@ st.title("NVU Utilizasiya — Analitika tətbiqi")
 st.markdown("Bu tətbiq Excel faylını yükləyib **təmizləyir** və **bölmələr** üzrə nəticələri göstərir.")
 st.info("Başlamaq üçün solda **1) Faylı yüklə** səhifəsinə keçin. Aşağıdakı **İl/Ay + Tarix mənbəyi** filtri bütün səhifələrə tətbiq olunur.")
 
-# ====== Köməkçilər ======
 AZ_MONTHS = ["Yanvar","Fevral","Mart","Aprel","May","İyun","İyul","Avqust","Sentyabr","Oktyabr","Noyabr","Dekabr"]
 
 SOURCE_LABELS = {
@@ -19,7 +18,6 @@ SOURCE_LABELS = {
 }
 
 def _get_years_from_source(df_full: pd.DataFrame, src_key: str):
-    """Seçilmiş mənbəyə görə mövcud illəri qaytar."""
     if df_full is None or len(df_full) == 0:
         return []
     if src_key == "KOMPOZIT":
@@ -34,7 +32,6 @@ def _get_years_from_source(df_full: pd.DataFrame, src_key: str):
     return []
 
 def _apply_filter(df_full: pd.DataFrame, src_key: str, years_sel, months_sel):
-    """Seçilmiş mənbə + il/ay kombinasiyasına görə df qaytar."""
     view = df_full.copy()
     if src_key == "KOMPOZIT":
         if years_sel:
@@ -50,14 +47,12 @@ def _apply_filter(df_full: pd.DataFrame, src_key: str, years_sel, months_sel):
             view = view[view[ay_col].isin([AZ_MONTHS.index(m)+1 for m in months_sel])]
     return view
 
-# ========= Sidebar: Tarix mənbəyi + İl/Ay Filtrləri =========
 with st.sidebar:
     st.header("Filtr: Tarix mənbəyi / İl / Ay")
 
     df_full = st.session_state.get("df_clean_full")
     has_data = df_full is not None and len(df_full) > 0
 
-    # Tarix mənbəyi (default = R)
     src_options = list(SOURCE_LABELS.keys())
     default_idx = src_options.index("R")
     option_labels = [SOURCE_LABELS[k] for k in src_options]
@@ -65,25 +60,21 @@ with st.sidebar:
                                   index=default_idx, disabled=not has_data)
     src_key = src_options[option_labels.index(selected_label)]
 
-    # Mövcud illər + ən son il
     years_available = _get_years_from_source(df_full, src_key) if has_data else []
     latest_year = max(years_available) if years_available else None
 
-    # İl seçimi
     year_mode = st.radio("İl rejimi", ["Hamısı", "Seçilən illər"],
                          index=(1 if latest_year else 0), horizontal=True, disabled=not has_data)
     year_select = st.multiselect("İllər", years_available,
                                  default=([latest_year] if latest_year else years_available),
                                  disabled=not (has_data and year_mode=="Seçilən illər"))
 
-    # Ay seçimi
     month_mode = st.radio("Ay rejimi", ["Hamısı", "Seçilən aylar"],
                           index=0, horizontal=True, disabled=not has_data)
     month_select = st.multiselect("Aylar", AZ_MONTHS,
                                   default=AZ_MONTHS,
                                   disabled=not (has_data and month_mode=="Seçilən aylar"))
 
-    # Seçilən mənbə üçün coverage/min-max (şəffaflıq)
     if has_data:
         cov = st.session_state.get("coverage_by_source", {}).get(src_key)
         mm  = st.session_state.get("minmax_by_source", {}).get(src_key)
@@ -95,7 +86,6 @@ with st.sidebar:
     reset = c1.button("Sıfırla", use_container_width=True, disabled=not has_data)
     apply = c2.button("Tətbiq et", use_container_width=True, disabled=not has_data)
 
-    # Tətbiq/Sıfırla
     if has_data:
         if reset:
             st.session_state["df_clean"] = df_full.copy()
@@ -116,7 +106,6 @@ with st.sidebar:
 
     st.caption("Filtr **Tətbiq et** ilə aktiv olur. **Sıfırla** → Hamısı.")
 
-# --- İlk yükləmədə SON ili avtomatik tətbiq et ---
 df_full = st.session_state.get("df_clean_full")
 if df_full is not None and len(df_full) > 0 and not st.session_state.get("filter_initialized"):
     st.session_state["filter_initialized"] = True
@@ -130,6 +119,5 @@ if df_full is not None and len(df_full) > 0 and not st.session_state.get("filter
         st.session_state["df_clean"] = df_full.copy()
         st.session_state["active_filter_summary"] = "Hamısı"
 
-# Aktiv filtr bandı
 summary_text = st.session_state.get("active_filter_summary", "Hamısı")
 st.success(f"Aktiv filtr: {summary_text}")
