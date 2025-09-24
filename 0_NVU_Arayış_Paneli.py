@@ -3,7 +3,7 @@ import pandas as pd
 
 st.set_page_config(page_title="NVU Analitika", page_icon="🧩", layout="wide")
 st.title("NVU Analitika — ümumi panel")
-st.markdown("Sol menudan **1) Faylı yüklə** səhifəsində faylı yükləyin, sonra buradakı filtr bütün səhifələrə tətbiq olunacaq.")
+st.markdown("Sol menudan **1) Faylı yüklə** səhifəsində faylı yükləyin. Buradakı filtr bütün səhifələrə tətbiq olunur.")
 
 AZ_MONTHS = ["Yanvar","Fevral","Mart","Aprel","May","İyun","İyul","Avqust","Sentyabr","Oktyabr","Noyabr","Dekabr"]
 
