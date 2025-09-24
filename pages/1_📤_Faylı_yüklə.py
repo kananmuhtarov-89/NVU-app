@@ -1,63 +1,139 @@
-import streamlit as st, os
+import streamlit as st
 import pandas as pd
+import numpy as np
 from nvu.cleaning import load_excel, dedup_dataframe
 
-st.title("1) Yüklə / Təmizlə")
+st.title("1) Faylı yüklə / Təmizlə")
 
-def _norm(s: str) -> str:
-    return (s or "").lower().replace("ı","i").replace("ə","e").replace("ö","o").replace("ü","u").replace("ş","s").replace("ç","c")
+# ===== Köməkçilər =====
+AZ_MONTHS = {1:"Yanvar",2:"Fevral",3:"Mart",4:"Aprel",5:"May",6:"İyun",7:"İyul",8:"Avqust",9:"Sentyabr",10:"Oktyabr",11:"Noyabr",12:"Dekabr"}
 
-def _guess_date_column(df: pd.DataFrame):
-    # Adında tarix sinonimləri olan sütunu öncəliklə seç
-    candidates = []
-    for c in df.columns:
-        lc = _norm(str(c))
-        if "tarix" in lc or "date" in lc or "daxil ol" in lc or "qebul" in lc or "teslim" in lc:
-            candidates.append(c)
-    if candidates:
-        return candidates[0]
-    # Fallback: tipcə datetime olan 1-ci sütun
-    for c in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[c]):
-            return c
+def col_letter_to_index(letter: str) -> int:
+    """Excel sütun hərfini 0-based index-ə çevirir (A=0, AB=27, ...)."""
+    letter = letter.strip().upper()
+    val = 0
+    for ch in letter:
+        if not ("A" <= ch <= "Z"):
+            return -1
+        val = val * 26 + (ord(ch) - 64)
+    return val - 1
+
+def get_column_by_letter(df: pd.DataFrame, letter: str):
+    idx = col_letter_to_index(letter)
+    if 0 <= idx < len(df.columns):
+        return df.columns[idx]
     return None
+
+def robust_to_datetime(series: pd.Series) -> pd.Series:
+    """Maksimum tolerantlıqla tarixi pars edir:
+    - mətn təmizlənməsi (NBSP, boşluq),
+    - dd.mm.yyyy / dd/mm/yyyy / dd-mm-yyyy (+ vaxt),
+    - Excel serial ədəd tarixləri.
+    """
+    s = series.copy()
+    # 1) string parse
+    s_str = s.astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
+    dt = pd.to_datetime(s_str, errors="coerce", dayfirst=True, infer_datetime_format=True)
+    # 2) serial number attempt (yalnız NaT qalanlar üçün)
+    mask_nat = dt.isna()
+    if mask_nat.any():
+        s_num = pd.to_numeric(s_str.where(mask_nat), errors="coerce")
+        # Serial aralığı (təxmini): 20000..50000 ~ illər 1955..2090
+        valid = s_num.between(20000, 50000, inclusive="both")
+        if valid.any():
+            base = pd.Timestamp("1899-12-30")  # Excel 1900 date system
+            dt2 = base + pd.to_timedelta(s_num[valid], unit="D")
+            dt.loc[valid.index.intersection(dt2.index)] = dt2
+    return dt
+
+# Mənbələr: R/W/AB/AF/AM
+SOURCES = {
+    "R":  {"letter": "R",  "label": "Müraciət üzrə son əməliyyat tarixi"},
+    "W":  {"letter": "W",  "label": "İcra sənədi üzrə son əməliyyat"},
+    "AB": {"letter": "AB", "label": "Təhvil-təslim üzrə son əməliyyat"},
+    "AF": {"letter": "AF", "label": "Təsdiqedici sənəd üzrə son əməliyyat"},
+    "AM": {"letter": "AM", "label": "Birdəfəlik ödəniş sənədinin son əməliyyat tarixi"},
+}
 
 uploaded = st.file_uploader("Excel (.xlsx/.xls) yüklə", type=["xlsx","xls"])
 
 if uploaded:
-    df = load_excel(uploaded)
-    st.write("Sətir sayı (xam):", len(df))
+    # 1) Yüklə
+    df_raw = load_excel(uploaded)
+    st.write("Sətir sayı (xam):", len(df_raw))
 
-    df_clean = dedup_dataframe(df, "Təhvil aktının seriya nömrəsi", "Təsdiqedici sənədin seriyası", "NV qeydiyyat nömrəsi")
+    # 2) Dublikatları təmizlə (öz qaydana uyğundur)
+    df = dedup_dataframe(
+        df_raw,
+        "Təhvil aktının seriya nömrəsi",
+        "Təsdiqedici sənədin seriyası",
+        "NV qeydiyyat nömrəsi",
+    ).copy()
 
-    # ---- DATE → il/ay sütunları ----
-    month_map = {1:"Yanvar",2:"Fevral",3:"Mart",4:"Aprel",5:"May",6:"İyun",7:"İyul",8:"Avqust",9:"Sentyabr",10:"Oktyabr",11:"Noyabr",12:"Dekabr"}
-    date_col = _guess_date_column(df_clean)
-    if date_col:
-        dt = pd.to_datetime(df_clean[date_col], errors="coerce", dayfirst=True)
-        df_clean["il"] = dt.dt.year
-        df_clean["ay_no"] = dt.dt.month
-        df_clean["ay_ad"] = df_clean["ay_no"].map(month_map)
-        df_clean["il_ay"] = dt.dt.strftime("%Y-%m")
-        st.caption(f"Tarix sütunu aşkarlandı: **{date_col}** → il/ay sütunları əlavə olundu.")
-        st.session_state["date_column_used"] = date_col
+    # 3) Mənbə sütunlarını hərfə görə tap və pars et
+    coverage = {}
+    minmax = {}
+    resolved_cols = {}
+    for key, meta in SOURCES.items():
+        colname = get_column_by_letter(df, meta["letter"])
+        resolved_cols[key] = colname
+        if colname is None:
+            # sütun yoxdur
+            df[f"dt_{key}"] = pd.NaT
+            df[f"il_{key}"] = np.nan
+            df[f"ay_no_{key}"] = np.nan
+            df[f"ay_ad_{key}"] = np.nan
+            coverage[key] = 0.0
+            minmax[key] = {"min": "—", "max": "—"}
+            continue
+
+        dt = robust_to_datetime(df[colname])
+        df[f"dt_{key}"] = dt
+        df[f"il_{key}"] = dt.dt.year
+        df[f"ay_no_{key}"] = dt.dt.month
+        df[f"ay_ad_{key}"] = df[f"ay_no_{key}"].map(AZ_MONTHS)
+
+        ok = dt.notna().sum()
+        cov = 100.0 * ok / len(df) if len(df) else 0.0
+        coverage[key] = cov
+        min_d = dt.min(); max_d = dt.max()
+        minmax[key] = {
+            "min": (min_d.strftime("%Y-%m-%d") if pd.notna(min_d) else "—"),
+            "max": (max_d.strftime("%Y-%m-%d") if pd.notna(max_d) else "—"),
+        }
+
+    # 4) KOMPOZİT tarix (ən son əməliyyat) — sətir üzrə max
+    dt_cols = [c for c in df.columns if c.startswith("dt_") and len(c) <= 5]  # dt_R, dt_W, dt_AB, dt_AF, dt_AM
+    if dt_cols:
+        df["dt_KOMPOZIT"] = pd.to_datetime(df[dt_cols]).max(axis=1)
     else:
-        st.warning("Tarix sütunu tapılmadı. İl/Ay filtri tarixsiz sətirlərdə işləməyəcək.")
+        df["dt_KOMPOZIT"] = pd.NaT
 
-    # Full və görünüş kopyaları
-    st.session_state["df_clean_full"] = df_clean.copy()
-    st.session_state["df_clean"] = df_clean
+    # 5) Session state: tam və görünüş
+    st.session_state["df_clean_full"] = df.copy()
+    st.session_state["df_clean"] = df.copy()
+    st.session_state["coverage_by_source"] = coverage
+    st.session_state["minmax_by_source"] = minmax
+    st.session_state["active_source_key"] = "R"   # default mənbə R
+    st.session_state["filter_initialized"] = False
 
-    st.success(f"Təmizləndi. Sətirlər (təmiz): {len(df_clean)}")
-    st.session_state["source_filename"] = uploaded.name
-    st.dataframe(df_clean.head(50), use_container_width=True)
+    # 6) Göstəricilər
+    st.success(f"Təmizləndi. Sətirlər (təmiz): {len(df)}")
+    st.caption("Tarix sütunlarının əhatəsi və min/max dəyərləri:")
+    cov_rows = []
+    for k, meta in SOURCES.items():
+        cov_rows.append({
+            "Mənbə": f"{k} — {meta['label']}",
+            "Sütun (hərf)": meta["letter"],
+            "Sütun (ad)": resolved_cols.get(k) or "tapılmadı",
+            "Dolu %": round(st.session_state['coverage_by_source'][k], 1),
+            "Min": st.session_state['minmax_by_source'][k]["min"],
+            "Max": st.session_state['minmax_by_source'][k]["max"],
+        })
+    st.dataframe(pd.DataFrame(cov_rows), use_container_width=True)
 
-    # Tez yoxlama: illərə görə paylanma
-    if "il" in df_clean.columns:
-        counts = df_clean["il"].value_counts(dropna=True).sort_index()
-        if not counts.empty:
-            st.write("**İllərə görə sətir sayı:**")
-            st.bar_chart(counts)
+    # Nümunə görünüş
+    st.dataframe(df.head(50), use_container_width=True)
+
 else:
     st.info("Fayl yükləyin.")
-
