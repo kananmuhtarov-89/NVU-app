@@ -1,20 +1,17 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="NVU Utilizasiya", page_icon="🧩", layout="wide")
-st.title("NVU Utilizasiya — Analitika tətbiqi")
-st.markdown("Bu tətbiq Excel faylını yükləyib **təmizləyir** və **bölmələr** üzrə nəticələri göstərir.")
-st.info("Başlamaq üçün solda **1) Faylı yüklə** səhifəsinə keçin. Aşağıdakı **İl/Ay + Tarix mənbəyi** filtri bütün səhifələrə tətbiq olunur.")
+st.set_page_config(page_title="NVU Analitika", page_icon="🧩", layout="wide")
+st.title("NVU Analitika — ümumi panel")
+st.markdown("Sol menudan **1) Faylı yüklə** səhifəsində faylı yükləyin, sonra buradakı filtr bütün səhifələrə tətbiq olunacaq.")
 
 AZ_MONTHS = ["Yanvar","Fevral","Mart","Aprel","May","İyun","İyul","Avqust","Sentyabr","Oktyabr","Noyabr","Dekabr"]
 
 SOURCE_LABELS = {
     "R":  "R — Müraciət",
-    "W":  "W — İcra sənədi",
     "AB": "AB — Təhvil-təslim",
     "AF": "AF — Təsdiqedici sənəd",
-    "AM": "AM — Birdəfəlik ödəniş",
-    "KOMPOZIT": "KOMPOZİT — ən son əməliyyat (max R/W/AB/AF/AM)",
+    "KOMPOZIT": "KOMPOZİT — ən son əməliyyat (max R/AB/AF)",
 }
 
 def _get_years_from_source(df_full: pd.DataFrame, src_key: str):
@@ -53,7 +50,6 @@ with st.sidebar:
     df_full = st.session_state.get("df_clean_full")
     has_data = df_full is not None and len(df_full) > 0
 
-    # Tarix mənbəyi (default: R) — əvvəlki seçim varsa onu saxlayırıq
     src_options = list(SOURCE_LABELS.keys())
     default_key = st.session_state.get("active_source_key", "R")
     default_idx = src_options.index(default_key)
@@ -62,13 +58,7 @@ with st.sidebar:
                                   index=default_idx, disabled=not has_data)
     src_key = src_options[option_labels.index(selected_label)]
 
-    # Mövcud illər. Boşdursa avtomatik KOMPOZİT-ə keçək.
     years_available = _get_years_from_source(df_full, src_key) if has_data else []
-    if has_data and src_key != "KOMPOZIT" and not years_available:
-        st.warning("Seçilmiş mənbədə il tapılmadı. **KOMPOZİT** mənbəyə keçirildi.")
-        src_key = "KOMPOZIT"
-        years_available = _get_years_from_source(df_full, src_key)
-
     latest_year = max(years_available) if years_available else None
 
     year_mode = st.radio("İl rejimi", ["Hamısı", "Seçilən illər"],
@@ -114,17 +104,12 @@ with st.sidebar:
 
     st.caption("Filtr **Tətbiq et** ilə aktiv olur. **Sıfırla** → Hamısı.")
 
-# İlk yükləmədə SON ili avtomatik tətbiq et
 df_full = st.session_state.get("df_clean_full")
 if df_full is not None and len(df_full) > 0 and not st.session_state.get("filter_initialized"):
     st.session_state["filter_initialized"] = True
     src_key = st.session_state.get("active_source_key", "R")
     years_available = _get_years_from_source(df_full, src_key)
-    if not years_available and src_key != "KOMPOZIT":
-        src_key = "KOMPOZIT"
-        years_available = _get_years_from_source(df_full, src_key)
     latest_year = max(years_available) if years_available else None
-
     if latest_year:
         st.session_state["df_clean"] = _apply_filter(df_full, src_key, [latest_year], AZ_MONTHS)
         st.session_state["active_filter_summary"] = f"Mənbə: {SOURCE_LABELS[src_key]} | İl: {latest_year} | Ay: Hamısı"
