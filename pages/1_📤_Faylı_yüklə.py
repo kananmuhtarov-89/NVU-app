@@ -153,14 +153,21 @@ if uploaded:
     df_raw = load_excel(uploaded)
     st.write("Sətir sayı (xam):", len(df_raw))
 
-    # 2) Dublikatları təmizlə (sənin qaydana görə)
-    df = dedup_dataframe(
-    df_raw,
+    # 2) Dublikatları təmizlə  (keep="last" istədiyimiz davranışdır)
+DEDUP_KEYS = [
     "Təhvil aktının seriya nömrəsi",
     "Təsdiqedici sənədin seriyası",
     "NV qeydiyyat nömrəsi",
-    keep="last",   # <-- bunu əlavə et
-).copy()
+]
+
+try:
+    # Sənin nvu.cleaning modulun keep-i dəstəkləyirsə bunu işlədəcək
+    df = dedup_dataframe(df_raw, *DEDUP_KEYS, keep="last").copy()
+except TypeError:
+    # Bəzi repolarda dedup_dataframe keep parametrini qəbul etmir → pandas ilə et
+    keys = [c for c in DEDUP_KEYS if c in df_raw.columns]
+    df = (df_raw.drop_duplicates(subset=keys, keep="last").copy() if keys else df_raw.copy())
+
 
     # 3) Xəritələmə: əvvəl başlıqla, sonra keyword, sonra hərflə (R/W/AB/AF/AM)
     coverage, minmax, resolved_cols = {}, {}, {}
