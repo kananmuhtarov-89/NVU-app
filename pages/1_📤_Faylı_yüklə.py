@@ -2,29 +2,24 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Sənin util-larını istifadə et; import alınmasa fallback işləsin
-try:
-    from nvu.cleaning import load_excel, dedup_dataframe
-except Exception:
-    def load_excel(file):
-        return pd.read_excel(file, dtype=object, engine="openpyxl")
-    def dedup_dataframe(df, *cols, keep="first"):
-        cols = [c for c in cols if c in df.columns]
-        return df.drop_duplicates(subset=cols, keep=keep) if cols else df.drop_duplicates(keep=keep)
+# --- Local fallbacks so we don't depend on nvu.cleaning during deploy
+def load_excel(file):
+    return pd.read_excel(file, dtype=object, engine="openpyxl")
 
 st.title("1) Faylı yüklə / Təmizlə")
 
 AZ_MONTHS = {1:"Yanvar",2:"Fevral",3:"Mart",4:"Aprel",5:"May",6:"İyun",7:"İyul",8:"Avqust",9:"Sentyabr",10:"Oktyabr",11:"Noyabr",12:"Dekabr"}
 
-# ---------- Köməkçilər ----------
+# ---------- Helpers (ASCII-safe) ----------
 def norm(s: str) -> str:
-    """Başlıq normalizasiyası (diakritiklər → latın, lower)."""
     s = str(s).strip().lower()
-    tr = str.maketrans("ıİəƏöÖüÜşŞçÇğĞ", "iIeeoOuUsScCgG")
-    return s.translate(tr)
+    trans_from = "ıiəeöoüuşıçcğg"
+    trans_to   = "iieeoouussccgg"
+    tbl = str.maketrans({src: dst for src, dst in zip(trans_from, trans_to)})
+    return s.translate(tbl)
 
 def col_letter_to_index(letter: str) -> int:
-    letter = letter.strip().upper()
+    letter = str(letter).strip().upper()
     val = 0
     for ch in letter:
         if not ("A" <= ch <= "Z"):
@@ -37,56 +32,54 @@ def get_column_by_letter(df: pd.DataFrame, letter: str):
     return df.columns[idx] if 0 <= idx < len(df.columns) else None
 
 def robust_to_datetime(series: pd.Series) -> pd.Series:
-    """Tolerant tarix parsinqi: NBSP/boşluq təmizlənməsi, müxtəlif formatlar, Excel serial."""
     s = series.copy()
     s_str = s.astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
     dt = pd.to_datetime(s_str, errors="coerce", dayfirst=True, infer_datetime_format=True)
     mask_nat = dt.isna()
     if mask_nat.any():
         s_num = pd.to_numeric(s_str.where(mask_nat), errors="coerce")
-        valid = s_num.between(20000, 50000, inclusive="both")  # 1955..2090 aralığı
+        valid = s_num.between(20000, 50000, inclusive="both")  # Excel serial range ~1955..2090
         if valid.any():
-            base = pd.Timestamp("1899-12-30")  # Excel 1900 sistemi
+            base = pd.Timestamp("1899-12-30")
             dt2 = base + pd.to_timedelta(s_num[valid], unit="D")
             dt.loc[valid.index.intersection(dt2.index)] = dt2
     return dt
 
-# ---------- Başlıq əsaslı xəritələmə ----------
-# Sənin göndərdiyin dəqiq başlıqlar:
+# ---------- Exact titles you showed (normalized) ----------
 EXACT_TITLES = {
     "R": [
-        "müraciət üzrə son əməliyyat tarixi",
         "muraciet uzre son emeliyyat tarixi",
+        "müraciət üzrə son əməliyyat tarixi",
     ],
     "W": [
-        "icra sənədi üzrə son əməliyyat",
         "icra senedi uzre son emeliyyat",
-        "icra sənədi üzrə son əməliyyat tarixi",
         "icra senedi uzre son emeliyyat tarixi",
+        "icra sənədi üzrə son əməliyyat",
+        "icra sənədi üzrə son əməliyyat tarixi",
     ],
     "AB": [
-        "təhvil-təslim üzrə son əməliyyat",
         "tehvil-teslim uzre son emeliyyat",
-        "təhvil-təslim üzrə son əməliyyat tarixi",
         "tehvil-teslim uzre son emeliyyat tarixi",
+        "təhvil-təslim üzrə son əməliyyat",
+        "təhvil-təslim üzrə son əməliyyat tarixi",
     ],
     "AF": [
-        "təsdiqedici sənəd üzrə son əməliyyat",
         "tesdiqedici sened uzre son emeliyyat",
-        "təsdiqedici sənəd üzrə son əməliyyat tarixi",
         "tesdiqedici sened uzre son emeliyyat tarixi",
+        "təsdiqedici sənəd üzrə son əməliyyat",
+        "təsdiqedici sənəd üzrə son əməliyyat tarixi",
     ],
     "AM": [
-        "birdəfəlik ödəniş sənədinin son əməliyyat tarixi",
         "birdefelik odenis senedinin son emeliyyat tarixi",
-        "birdəfəlik ödəniş sənədinin son əməliyyat",
         "birdefelik odenis senedinin son emeliyyat",
+        "birdəfəlik ödəniş sənədinin son əməliyyat tarixi",
+        "birdəfəlik ödəniş sənədinin son əməliyyat",
     ],
 }
 
-# Açar sözlərlə (əməliyyat şərti mütləqdir) – “nömrə” sütunlarını istisna edir
+# Keywords (AND). We require "emeliyyat" to avoid mapping to "...nomresi".
 KEYWORD_SETS = {
-    "R":  [["murac", "emeliyyat"]],                          # "tarix" opsional
+    "R":  [["murac", "emeliyyat"]],
     "W":  [["icra", "emeliyyat"]],
     "AB": [["tehvil", "emeliyyat"], ["teslim", "emeliyyat"]],
     "AF": [["tesdiq", "sened", "emeliyyat"]],
@@ -94,43 +87,36 @@ KEYWORD_SETS = {
 }
 
 def find_best_column(df: pd.DataFrame, key: str, letter_hint: str):
-    """
-    1) Tam başlıq uyğunluğu (EXACT_TITLES)
-    2) Açar sözlərlə axtarış (KEYWORD_SETS) — 'emeliyyat' mütləqdir
-    3) Fallback: sütun hərfinə görə (letter_hint)
-    Bir neçə namizəd olarsa, tarixə çevrilə bilənləri pars edib **coverage**-a görə ən yaxşını seç.
-    """
     cols = list(df.columns)
     ncols = {c: norm(c) for c in cols}
     candidates = []
 
-    # 1) exact match
+    # 1) exact title match
     exacts = [norm(t) for t in EXACT_TITLES.get(key, [])]
     for c in cols:
         if ncols[c] in exacts:
-            candidates.append(("exact", c))
+            candidates.append(c)
 
-    # 2) keyword match (AND qaydası)
+    # 2) keyword AND match
     if not candidates:
         for token_set in KEYWORD_SETS.get(key, []):
-            token_set = [t for t in token_set]  # already ascii-like
             for c in cols:
                 nc = ncols[c]
                 if all(t in nc for t in token_set):
-                    candidates.append(("kw", c))
+                    candidates.append(c)
 
-    # 3) fallback by letter
+    # 3) fallback by column letter
     if not candidates:
         col_by_letter = get_column_by_letter(df, letter_hint)
         if col_by_letter is not None:
-            candidates.append(("letter", col_by_letter))
+            candidates.append(col_by_letter)
 
     if not candidates:
         return None, pd.Series(pd.NaT, index=df.index), 0.0
 
-    # Namizədlər arasından ən yaxşısını seç: tarix parsinqi coverage-ı ən yüksək olan
+    # Choose the candidate with highest datetime coverage
     best_col, best_cov, best_dt = None, -1.0, None
-    for _, c in candidates:
+    for c in candidates:
         dt = robust_to_datetime(df[c])
         cov = (100.0 * dt.notna().sum() / len(df)) if len(df) else 0.0
         if cov > best_cov:
@@ -149,27 +135,23 @@ SOURCES = {
 uploaded = st.file_uploader("Excel (.xlsx/.xls) yüklə", type=["xlsx","xls"])
 
 if uploaded:
-    # 1) Yüklə
+    # 1) Load
     df_raw = load_excel(uploaded)
     st.write("Sətir sayı (xam):", len(df_raw))
 
-   # 2) Dublikatları təmizlə — keep="last" (son qeydi saxla)
-DEDUP_KEYS = [
-    "Təhvil aktının seriya nömrəsi",
-    "Təsdiqedici sənədin seriyası",
-    "NV qeydiyyat nömrəsi",
-]
+    # 2) Deduplicate (keep last)
+    DEDUP_KEYS = [
+        "Təhvil aktının seriya nömrəsi",
+        "Təsdiqedici sənədin seriyası",
+        "NV qeydiyyat nömrəsi",
+    ]
+    keys_present = [c for c in DEDUP_KEYS if c in df_raw.columns]
+    if keys_present:
+        df = df_raw.drop_duplicates(subset=keys_present, keep="last").copy()
+    else:
+        df = df_raw.drop_duplicates(keep="last").copy()
 
-keys_present = [c for c in DEDUP_KEYS if c in df_raw.columns]
-if keys_present:
-    df = df_raw.drop_duplicates(subset=keys_present, keep="last").copy()
-else:
-    # heç biri yoxdursa, ümumi təkrarı sil (yenə sonu saxla)
-    df = df_raw.drop_duplicates(keep="last").copy()
-
-
-
-    # 3) Xəritələmə: əvvəl başlıqla, sonra keyword, sonra hərflə (R/W/AB/AF/AM)
+    # 3) Column mapping per source (title -> keywords -> letter)
     coverage, minmax, resolved_cols = {}, {}, {}
     for key, meta in SOURCES.items():
         colname, dt, cov = find_best_column(df, key, meta["letter"])
@@ -195,7 +177,7 @@ else:
                 "max": (max_d.strftime("%Y-%m-%d") if pd.notna(max_d) else "—"),
             }
 
-    # 4) KOMPOZİT — sətir üzrə max(dt_R, dt_W, dt_AB, dt_AF, dt_AM)
+    # 4) Composite date = row-wise max of sources
     dt_cols = [c for c in ["dt_R", "dt_W", "dt_AB", "dt_AF", "dt_AM"] if c in df.columns]
     if dt_cols:
         for c in dt_cols:
@@ -212,7 +194,7 @@ else:
         "max": (max_d.strftime("%Y-%m-%d") if pd.notna(max_d) else "—"),
     }
 
-    # 5) Session state
+    # 5) Put into session
     st.session_state["df_clean_full"] = df.copy()
     st.session_state["df_clean"] = df.copy()
     st.session_state["coverage_by_source"] = coverage
@@ -220,7 +202,7 @@ else:
     st.session_state["active_source_key"] = "R"
     st.session_state["filter_initialized"] = False
 
-    # 6) Özet cədvəl (coverage / min-max)
+    # 6) Coverage table
     st.success(f"Təmizləndi. Sətirlər (təmiz): {len(df)}")
     st.caption("Tarix sütunlarının əhatəsi və min/max dəyərləri:")
 
@@ -244,7 +226,7 @@ else:
     })
     st.dataframe(pd.DataFrame(cov_rows), use_container_width=True)
 
-    # Nümunə görünüş
+    # Preview
     st.dataframe(df.head(50), use_container_width=True)
 
 else:
