@@ -6,7 +6,7 @@ st.title("NVU Utilizasiya — Analitika tətbiqi")
 st.markdown("Bu tətbiq Excel faylını yükləyib **təmizləyir** və **bölmələr** üzrə nəticələri göstərir.")
 st.info("Başlamaq üçün solda **1) Faylı yüklə** səhifəsinə keçin. Aşağıdakı **İl/Ay + Tarix mənbəyi** filtri bütün səhifələrə tətbiq olunur.")
 
-# ====== Kiçik köməkçilər ======
+# ====== Köməkçilər ======
 AZ_MONTHS = ["Yanvar","Fevral","Mart","Aprel","May","İyun","İyul","Avqust","Sentyabr","Oktyabr","Noyabr","Dekabr"]
 
 SOURCE_LABELS = {
@@ -27,7 +27,6 @@ def _get_years_from_source(df_full: pd.DataFrame, src_key: str):
             years = sorted(df_full["dt_KOMPOZIT"].dropna().dt.year.unique().tolist())
             return [int(x) for x in years]
         return []
-    # normal mənbə
     col = f"il_{src_key}"
     if col in df_full:
         years = sorted(df_full[col].dropna().unique().tolist())
@@ -38,7 +37,6 @@ def _apply_filter(df_full: pd.DataFrame, src_key: str, years_sel, months_sel):
     """Seçilmiş mənbə + il/ay kombinasiyasına görə df qaytar."""
     view = df_full.copy()
     if src_key == "KOMPOZIT":
-        # il/ay kompozitdən
         if years_sel:
             view = view[view["dt_KOMPOZIT"].dt.year.isin(years_sel)]
         if months_sel:
@@ -59,44 +57,45 @@ with st.sidebar:
     df_full = st.session_state.get("df_clean_full")
     has_data = df_full is not None and len(df_full) > 0
 
-    # Tarix mənbəyi seçimi (default = R)
+    # Tarix mənbəyi (default = R)
     src_options = list(SOURCE_LABELS.keys())
     default_idx = src_options.index("R")
-    src_label = st.selectbox("Tarix mənbəyi", options=[SOURCE_LABELS[k] for k in src_options],
-                             index=default_idx, disabled=not has_data)
-    src_key = src_options[[SOURCE_LABELS[k] for k in src_options].index(src_label)]  # geri açar
+    option_labels = [SOURCE_LABELS[k] for k in src_options]
+    selected_label = st.selectbox("Tarix mənbəyi", options=option_labels,
+                                  index=default_idx, disabled=not has_data)
+    src_key = src_options[option_labels.index(selected_label)]
 
-    # Mənbəyə görə mövcud illər
+    # Mövcud illər + ən son il
     years_available = _get_years_from_source(df_full, src_key) if has_data else []
     latest_year = max(years_available) if years_available else None
 
-    # İl rejimi və seçim
+    # İl seçimi
     year_mode = st.radio("İl rejimi", ["Hamısı", "Seçilən illər"],
                          index=(1 if latest_year else 0), horizontal=True, disabled=not has_data)
     year_select = st.multiselect("İllər", years_available,
                                  default=([latest_year] if latest_year else years_available),
                                  disabled=not (has_data and year_mode=="Seçilən illər"))
 
-    # Ay rejimi və seçim
+    # Ay seçimi
     month_mode = st.radio("Ay rejimi", ["Hamısı", "Seçilən aylar"],
                           index=0, horizontal=True, disabled=not has_data)
     month_select = st.multiselect("Aylar", AZ_MONTHS,
                                   default=AZ_MONTHS,
                                   disabled=not (has_data and month_mode=="Seçilən aylar"))
 
-    # Coverage/min-max göstəricisi (seçilən mənbəyə görə)
+    # Seçilən mənbə üçün coverage/min-max (şəffaflıq)
     if has_data:
         cov = st.session_state.get("coverage_by_source", {}).get(src_key)
         mm  = st.session_state.get("minmax_by_source", {}).get(src_key)
         if cov is not None and mm is not None:
-            st.caption(f"Seçilmiş mənbə üçün əhatə: **{cov:.1f}%** — "
+            st.caption(f"Seçilmiş mənbə: **{SOURCE_LABELS[src_key]}** — əhatə: **{cov:.1f}%**; "
                        f"Min: **{mm['min']}**, Max: **{mm['max']}**")
 
     c1, c2 = st.columns(2)
     reset = c1.button("Sıfırla", use_container_width=True, disabled=not has_data)
     apply = c2.button("Tətbiq et", use_container_width=True, disabled=not has_data)
 
-    # Tətbiq/Sıfırla məntiqi
+    # Tətbiq/Sıfırla
     if has_data:
         if reset:
             st.session_state["df_clean"] = df_full.copy()
@@ -117,7 +116,7 @@ with st.sidebar:
 
     st.caption("Filtr **Tətbiq et** ilə aktiv olur. **Sıfırla** → Hamısı.")
 
-# --- İlk açılışda SON ili avtomatik tətbiq et (seçilmiş mənbəyə görə) ---
+# --- İlk yükləmədə SON ili avtomatik tətbiq et ---
 df_full = st.session_state.get("df_clean_full")
 if df_full is not None and len(df_full) > 0 and not st.session_state.get("filter_initialized"):
     st.session_state["filter_initialized"] = True
