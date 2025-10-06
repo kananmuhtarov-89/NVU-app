@@ -3,14 +3,17 @@ from io import BytesIO
 from typing import Dict, Any, Optional
 import pandas as pd
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # -------------------- Köməkçilər --------------------
 def _fmt_int(x: Optional[int]) -> str:
     if x is None:
         return "—"
-    return f"{int(x):,}".replace(",", " ")
+    try:
+        return f"{int(x):,}".replace(",", " ")
+    except Exception:
+        return str(x)
 
 def _make_table_borderless(table):
     """
@@ -27,7 +30,6 @@ def _make_table_borderless(table):
             tblPr = tbl.get_or_add_tblPr()
 
         if tblPr is None:
-            # heç olmasa heç nə etmədən çıxaq (sənəd yenə də yaranacaq)
             return
 
         # Namespace-i əl ilə veririk (w:)
@@ -37,29 +39,60 @@ def _make_table_borderless(table):
         for el in tblPr.xpath("./w:tblBorders", namespaces=NS):
             tblPr.remove(el)
     except Exception:
-        # Stil söndürmə uğursuz olsa belə, export davam etsin
         pass
+
+def _to_text(val) -> str:
+    """NaN/boş/“nan” dəyərləri '—' kimi yaz, ədəd varsa '.0' at."""
+    if pd.isna(val):
+        return "—"
+    s = str(val).strip()
+    if s.lower() in ("nan", "none", ""):
+        return "—"
+    # ədədlərdə .0 at
+    try:
+        if isinstance(val, float) and float(val).is_integer():
+            return _fmt_int(int(val))
+        if isinstance(val, (int,)):
+            return _fmt_int(val)
+    except Exception:
+        pass
+    return s
+
+def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
+    dfx = df.copy()
+    for c in dfx.columns:
+        dfx[c] = dfx[c].map(_to_text)
+    return dfx
 
 def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> None:
     dfx = df.copy()
     if add_rownum and len(dfx) > 0:
         dfx.insert(0, "Sıra №", range(1, len(dfx) + 1))
+    dfx = _sanitize_df_for_docx(dfx)
 
     table = doc.add_table(rows=1, cols=len(dfx.columns))
     _make_table_borderless(table)
 
+    # Header sətri
     hdr = table.rows[0].cells
     for i, col in enumerate(dfx.columns):
         p = hdr[i].paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         run = p.add_run(str(col))
         run.bold = True
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
+        # Açıq tünd boz (opsional): run.font.color.rgb = RGBColor(55, 55, 55)
 
+    # Sətirlər
     for _, row in dfx.iterrows():
         cells = table.add_row().cells
         for j, col in enumerate(dfx.columns):
-            val = row[col]
-            cells[j].text = "" if pd.isna(val) else str(val)
+            p = cells[j].paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            run = p.add_run(row[col])
+            run.font.name = "Arial"
+            run.font.size = Pt(11)
 
 def _subset(df: pd.DataFrame, preferred_cols) -> pd.DataFrame:
     cols = [c for c in preferred_cols if c in df.columns]
@@ -68,24 +101,41 @@ def _subset(df: pd.DataFrame, preferred_cols) -> pd.DataFrame:
 # -------------------- DOCX --------------------
 def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     doc = Document()
-    doc.styles["Normal"].font.name = "Calibri"
-    doc.styles["Normal"].font.size = Pt(11)
+
+    # Ümumi stil – Arial 12
+    base = doc.styles["Normal"]
+    base.font.name = "Arial"
+    base.font.size = Pt(12)
+
+    # Heading 1 – Arial 18, tünd mavi
+    h1 = doc.styles["Heading 1"]
+    h1.font.name = "Arial"
+    h1.font.size = Pt(18)
+    h1.font.color.rgb = RGBColor(0x12, 0x3A, 0x7A)  # #123A7A
+
+    # Heading 2 – Arial 14, mavi
+    h2 = doc.styles["Heading 2"]
+    h2.font.name = "Arial"
+    h2.font.size = Pt(14)
+    h2.font.color.rgb = RGBColor(0x1F, 0x5A, 0xB6)  # #1F5AB6
 
     doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
     if source_filename:
-        doc.add_paragraph(f"Mənbə fayl: {source_filename}")
+        p = doc.add_paragraph("Mənbə fayl: ")
+        run = p.add_run(source_filename)
+        run.bold = True
 
     # 1) Utilizatorlar
     doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları", level=2)
     util = report.get("utilizator_counts", pd.DataFrame())
     if isinstance(util, pd.DataFrame) and not util.empty:
-        if util.shape[1] >= 2:
-            total = int(util.iloc[:, 1].sum())
-            util_out = util.copy()
+        util_out = util.copy()
+        if util_out.shape[1] >= 2:
+            total = pd.to_numeric(util_out.iloc[:, 1], errors="coerce").fillna(0).astype(int).sum()
+            util_out = util_out.copy()
+            util_out.iloc[:, 1] = pd.to_numeric(util_out.iloc[:, 1], errors="coerce").fillna(0).astype(int)
             util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
             util_out.loc[len(util_out) - 1, util_out.columns[1]] = total
-        else:
-            util_out = util.copy()
         _add_table(doc, util_out, add_rownum=False)
     else:
         doc.add_paragraph("Məlumat yoxdur.")
@@ -95,20 +145,26 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
     ready = report.get("tesnifat_table")
     if isinstance(ready, pd.DataFrame) and not ready.empty:
-        # yalnız lazım olan sütunlar; Açıqlama yoxdur
         pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
         t = _subset(ready, pref)
-        # ehtiyat: əgər sadəcə "Kod" yoxdursa "Təsnifat"dan istifadə
         if "Kod" not in t.columns and "Təsnifat" in t.columns:
             t = t.rename(columns={"Təsnifat": "Kod"})
-        t = t[["Kod", "Say"] + (["Cəmi (AZN)"] if calc and "Cəmi (AZN)" in t.columns else [])]
-        _add_table(doc, t, add_rownum=False)
+        cols = ["Kod", "Say"]
+        if calc and "Cəmi (AZN)" in t.columns:
+            # rəqəmləri int kimi göstər
+            t["Cəmi (AZN)"] = pd.to_numeric(t["Cəmi (AZN)"], errors="coerce").fillna(0).astype(int)
+            cols += ["Cəmi (AZN)"]
+        _add_table(doc, t[cols], add_rownum=False)
+
+        # CƏM göstəriciləri
         if "Say" in t.columns:
             p = doc.add_paragraph()
-            p.add_run(f"Cəm say: {_fmt_int(int(t['Say'].sum()))}").bold = True
+            p.add_run(f"Cəm say: {_fmt_int(int(pd.to_numeric(t['Say'], errors='coerce').fillna(0).sum()))}").bold = True
         if calc and "Cəmi (AZN)" in t.columns:
             p = doc.add_paragraph()
-            p.add_run(f"Ümumi məbləğ (AZN): {_fmt_int(int(t['Cəmi (AZN)'].sum()))}").bold = True
+            p.add_run(
+                f"Ümumi məbləğ (AZN): {_fmt_int(int(pd.to_numeric(t['Cəmi (AZN)'], errors='coerce').fillna(0).sum()))}"
+            ).bold = True
     else:
         base = report.get("tesnifat_counts", pd.DataFrame())
         t = _subset(base, ["Təsnifat", "Say"])
@@ -136,7 +192,12 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         doc.add_heading(title, level=2)
         d = report.get(key, pd.DataFrame())
         if isinstance(d, pd.DataFrame) and not d.empty:
-            _add_table(doc, _subset(d, pref), add_rownum=add_no)
+            # rəqəm sütunlarını int kimi göstərək
+            dx = d.copy()
+            for col in dx.columns:
+                if pd.api.types.is_numeric_dtype(dx[col]):
+                    dx[col] = pd.to_numeric(dx[col], errors="coerce").fillna(0).astype(int)
+            _add_table(doc, _subset(dx, pref), add_rownum=add_no)
         else:
             doc.add_paragraph("Məlumat yoxdur.")
 
@@ -156,8 +217,9 @@ def export_xlsx(report: Dict[str, Any]) -> bytes:
         util = report.get("utilizator_counts")
         if isinstance(util, pd.DataFrame) and not util.empty and util.shape[1] >= 2:
             util2 = util.copy()
+            util2.iloc[:, 1] = pd.to_numeric(util2.iloc[:, 1], errors="coerce").fillna(0).astype(int)
             util2.loc[len(util2), util2.columns[0]] = "CƏM"
-            util2.loc[len(util2) - 1, util2.columns[1]] = int(util.iloc[:, 1].sum())
+            util2.loc[len(util2) - 1, util2.columns[1]] = int(util2.iloc[:-1, 1].sum())
             util2.to_excel(xw, sheet_name="utilizator_counts", index=False)
 
         # Təsnifat: hazır cədvəl yoxdursa baza yaz
