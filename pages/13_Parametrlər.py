@@ -1,30 +1,45 @@
-import streamlit as st
 
-st.title("⚙️ Parametrlər")
+import streamlit as st, pandas as pd
+from nvu.settings import get_settings, set_settings, CANON_COLS, upload_settings, download_settings_button
 
-# ---- Top-N Parametrləri ----
-st.markdown("#### 🔝 Top-N göstəriciləri")
+st.title("Parametrlər")
 
-st.session_state.setdefault("param_topN_erizeci", 20)
-st.session_state.setdefault("param_topN_marka", 20)
-st.session_state.setdefault("param_topN_model", 20)
-st.session_state.setdefault("param_topN_reng", 20)
+cfg = get_settings()
 
-col1, col2 = st.columns(2)
-with col1:
-    st.session_state["param_topN_erizeci"] = st.number_input("Ərizəçi Top-N", 5, 100, st.session_state["param_topN_erizeci"])
-    st.session_state["param_topN_model"] = st.number_input("Model Top-N", 5, 100, st.session_state["param_topN_model"])
-with col2:
-    st.session_state["param_topN_marka"] = st.number_input("Marka Top-N", 5, 100, st.session_state["param_topN_marka"])
-    st.session_state["param_topN_reng"] = st.number_input("Rəng Top-N", 5, 100, st.session_state["param_topN_reng"])
+st.subheader("1) Sütun xəritəsi")
+st.caption("Soldakı (kanonik) → sağdakı (sənin fayldakı konkret başlıq). Xəritəni yadda saxla və export et.")
+colmap = cfg.get("column_map",{}).copy()
+for canon in CANON_COLS:
+    colmap[canon] = st.text_input(canon, value=colmap.get(canon, ""), key=f"colmap_{canon}")
+cfg["column_map"] = colmap
 
-# ---- Digər Parametrlər ----
-st.markdown("#### ⚙️ Digər parametrlər")
+st.subheader("2) Top-N dəyərləri")
+c1,c2,c3,c4 = st.columns(4)
+cfg["topN"]["applicant"] = c1.number_input("Top-N Ərizəçi", 10, 100, cfg["topN"]["applicant"], 5)
+cfg["topN"]["brand"]     = c2.number_input("Top-N Marka", 10, 100, cfg["topN"]["brand"], 5)
+cfg["topN"]["model"]     = c3.number_input("Top-N Model", 10, 100, cfg["topN"]["model"], 5)
+cfg["topN"]["color"]     = c4.number_input("Top-N Rəng", 10, 100, cfg["topN"]["color"], 5)
 
-# Variant 1: default = blanklar göstərilmir
-st.session_state.setdefault("param_include_blanks", False)
-st.session_state["param_include_blanks"] = st.toggle(
-    "Boş sətrləri göstər (tövsiyə olunmur)", st.session_state["param_include_blanks"]
-)
+st.subheader("3) Dedup qaydaları")
+keys = cfg.get("dedup_keys", [])
+opts = ["Təhvil aktının seriya nömrəsi","Təsdiqedici sənədin seriyası","NV qeydiyyat nömrəsi"]
+sel = st.multiselect("Təkrarı silmək üçün istifadə ediləcək açarlar", options=opts, default=keys)
+cfg["dedup_keys"] = sel
 
-st.info("Top-N dəyərləri UI və Word hesabatında eyni tətbiq olunur. Blank sətrlər default olaraq gizlədilir.")
+st.subheader("4) Status sözlükləri")
+with st.expander("Təsdiq edici sənədin statusu — sinonimlər"):
+    d = cfg["status_dict"]["tesdiq"]
+    for canon, alts in d.items():
+        cfg["status_dict"]["tesdiq"][canon] = st.text_area(canon, value=", ".join(alts)).split(",")
+with st.expander("Təhvil-təslim sənədinin statusu — sinonimlər"):
+    d2 = cfg["status_dict"]["tehvil"]
+    for canon, alts in d2.items():
+        cfg["status_dict"]["tehvil"][canon] = st.text_area(canon, value=", ".join(alts)).split(",")
+
+st.divider()
+if st.button("Parametrləri yadda saxla (sessiya daxilində)"):
+    set_settings(cfg); st.success("Parametrlər yadda saxlandı (sessiya).")
+
+c5,c6 = st.columns(2)
+with c5: download_settings_button()
+with c6: upload_settings()
