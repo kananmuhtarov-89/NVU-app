@@ -5,6 +5,8 @@ import pandas as pd
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 # -------------------- Köməkçilər --------------------
 def _fmt_int(x: Optional[int]) -> str:
@@ -18,26 +20,29 @@ def _fmt_int(x: Optional[int]) -> str:
 def _make_table_borderless(table):
     """
     Word cədvəlində sərhədləri (grid) söndürmək üçün stabil metod.
-    Bəzi mühitlərdə python-docx tblPr və ya nsmap qaytarmadığından,
-    həm None hallarını, həm də namespace-i manuel idarə edirik.
-    Uğursuz olarsa, export dayanmasın deyə səssiz ötürürük.
     """
     try:
         tbl = table._tbl
-        # tblPr None ola bilər — bu halda yaradıb geri qaytarır
         tblPr = getattr(tbl, "tblPr", None)
         if tblPr is None and hasattr(tbl, "get_or_add_tblPr"):
             tblPr = tbl.get_or_add_tblPr()
-
         if tblPr is None:
             return
-
-        # Namespace-i əl ilə veririk (w:)
         NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-
-        # Mövcud sərhəd elementlərini sil
         for el in tblPr.xpath("./w:tblBorders", namespaces=NS):
             tblPr.remove(el)
+    except Exception:
+        pass
+
+def _shade_cell(cell, fill_hex: str = "D9E1F2"):
+    """Cədvəl hüceyrəsinə fon rəngi ver (header üçün)."""
+    try:
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), fill_hex)  # hex like "D9E1F2"
+        tcPr.append(shd)
     except Exception:
         pass
 
@@ -48,11 +53,10 @@ def _to_text(val) -> str:
     s = str(val).strip()
     if s.lower() in ("nan", "none", ""):
         return "—"
-    # ədədlərdə .0 at
     try:
         if isinstance(val, float) and float(val).is_integer():
             return _fmt_int(int(val))
-        if isinstance(val, (int,)):
+        if isinstance(val, int):
             return _fmt_int(val)
     except Exception:
         pass
@@ -63,6 +67,20 @@ def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
     for c in dfx.columns:
         dfx[c] = dfx[c].map(_to_text)
     return dfx
+
+def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
+    """
+    Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil.
+    key_cols – mətni vacib olan sütun(lar).
+    """
+    dfx = df.copy()
+    mask = pd.Series(True, index=dfx.index)
+    for c in key_cols:
+        if c in dfx.columns:
+            s = dfx[c].astype(str).str.strip()
+            bad = s.isna() | (s == "") | s.str.lower().isin(["nan", "none", "—"])
+            mask &= ~bad
+    return dfx[mask].copy()
 
 def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> None:
     dfx = df.copy()
@@ -76,13 +94,13 @@ def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> Non
     # Header sətri
     hdr = table.rows[0].cells
     for i, col in enumerate(dfx.columns):
+        _shade_cell(hdr[i], "D9E1F2")
         p = hdr[i].paragraphs[0]
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         run = p.add_run(str(col))
         run.bold = True
         run.font.name = "Arial"
         run.font.size = Pt(11)
-        # Açıq tünd boz (opsional): run.font.color.rgb = RGBColor(55, 55, 55)
 
     # Sətirlər
     for _, row in dfx.iterrows():
@@ -111,13 +129,13 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     h1 = doc.styles["Heading 1"]
     h1.font.name = "Arial"
     h1.font.size = Pt(18)
-    h1.font.color.rgb = RGBColor(0x12, 0x3A, 0x7A)  # #123A7A
+    h1.font.color.rgb = RGBColor(0x12, 0x3A, 0x7A)
 
     # Heading 2 – Arial 14, mavi
     h2 = doc.styles["Heading 2"]
     h2.font.name = "Arial"
     h2.font.size = Pt(14)
-    h2.font.color.rgb = RGBColor(0x1F, 0x5A, 0xB6)  # #1F5AB6
+    h2.font.color.rgb = RGBColor(0x1F, 0x5A, 0xB6)
 
     doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
     if source_filename:
@@ -126,14 +144,13 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         run.bold = True
 
     # 1) Utilizatorlar
-    doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları", level=2)
+    doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları — yekun", level=2)
     util = report.get("utilizator_counts", pd.DataFrame())
     if isinstance(util, pd.DataFrame) and not util.empty:
         util_out = util.copy()
         if util_out.shape[1] >= 2:
-            total = pd.to_numeric(util_out.iloc[:, 1], errors="coerce").fillna(0).astype(int).sum()
-            util_out = util_out.copy()
             util_out.iloc[:, 1] = pd.to_numeric(util_out.iloc[:, 1], errors="coerce").fillna(0).astype(int)
+            total = int(util_out.iloc[:, 1].sum())
             util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
             util_out.loc[len(util_out) - 1, util_out.columns[1]] = total
         _add_table(doc, util_out, add_rownum=False)
@@ -141,7 +158,7 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         doc.add_paragraph("Məlumat yoxdur.")
 
     # 2) Təsnifat
-    doc.add_heading("2) Təsnifatlar üzrə", level=2)
+    doc.add_heading("2) Təsnifatlar üzrə — yekun", level=2)
     calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
     ready = report.get("tesnifat_table")
     if isinstance(ready, pd.DataFrame) and not ready.empty:
@@ -151,12 +168,10 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
             t = t.rename(columns={"Təsnifat": "Kod"})
         cols = ["Kod", "Say"]
         if calc and "Cəmi (AZN)" in t.columns:
-            # rəqəmləri int kimi göstər
             t["Cəmi (AZN)"] = pd.to_numeric(t["Cəmi (AZN)"], errors="coerce").fillna(0).astype(int)
             cols += ["Cəmi (AZN)"]
         _add_table(doc, t[cols], add_rownum=False)
 
-        # CƏM göstəriciləri
         if "Say" in t.columns:
             p = doc.add_paragraph()
             p.add_run(f"Cəm say: {_fmt_int(int(pd.to_numeric(t['Say'], errors='coerce').fillna(0).sum()))}").bold = True
@@ -173,31 +188,40 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     # 3+) Digər bölmələr – dinamik başlıqlar + Sıra №
     meta = report.get("top_counts_meta", {})
     sections = [
-        ("3) Təsdiqedici Statusları", "tesdiq_status_totals",
-         ["Təsdiq edici sənədin statusu", "Say"], False),
-        ("4) TT aktların Statusları", "tehvil_status_totals",
-         ["Təhvil-təslim sənədinin statusu", "Say"], False),
+        ("3) Təsdiqedici sənədin statusları — yekun", "tesdiq_status_totals",
+         ["Təsdiq edici sənədin statusu", "Say"], False, ["Təsdiq edici sənədin statusu"]),
+        ("4) Təhvil-təslim sənədinin statusları — yekun", "tehvil_status_totals",
+         ["Təhvil-təslim sənədinin statusu", "Say"], False, ["Təhvil-təslim sənədinin statusu"]),
         (f"5) Top {meta.get('erizeci_N', 50)} Ərizəçi", "top_erizeci",
-         ["Ərizəçinin tam adı", "Say"], True),
+         ["Ərizəçinin tam adı", "Say"], True, None),
         (f"6) Marka Top {meta.get('marka_N', 20)}", "top_marka",
-         ["Marka", "Say"], True),
+         ["Marka", "Say"], True, None),
         (f"7) Modellər üzrə Top {meta.get('model_N', 10)}", "top_model",
-         ["Marka", "Model", "Say"], True),
+         ["Marka", "Model", "Say"], True, None),
         (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng",
-         ["Rəng", "Say"], True),
-        ("9) NV yaşları 10illik intervallarda", "year_bins",
-         ["Buraxılış ili", "Say"], False),
+         ["Rəng", "Say"], True, None),
+        ("9) NV yaşları 10illik intervallarda — yekun", "year_bins",
+         ["Buraxılış ili", "Say"], False, None),
     ]
-    for title, key, pref, add_no in sections:
+    for title, key, pref, add_no, drop_keys in sections:
         doc.add_heading(title, level=2)
         d = report.get(key, pd.DataFrame())
         if isinstance(d, pd.DataFrame) and not d.empty:
-            # rəqəm sütunlarını int kimi göstərək
             dx = d.copy()
+
+            # Status cədvəllərində boş/NaN dəyərləri TAMAMİLƏ çıxar
+            if drop_keys:
+                dx = _drop_blank_rows(dx, drop_keys)
+
+            # rəqəm sütunlarını int kimi göstərək
             for col in dx.columns:
                 if pd.api.types.is_numeric_dtype(dx[col]):
                     dx[col] = pd.to_numeric(dx[col], errors="coerce").fillna(0).astype(int)
-            _add_table(doc, _subset(dx, pref), add_rownum=add_no)
+
+            if not dx.empty:
+                _add_table(doc, _subset(dx, pref), add_rownum=add_no)
+            else:
+                doc.add_paragraph("Məlumat yoxdur.")
         else:
             doc.add_paragraph("Məlumat yoxdur.")
 
