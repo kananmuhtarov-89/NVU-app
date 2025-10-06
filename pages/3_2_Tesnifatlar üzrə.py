@@ -1,7 +1,7 @@
 # pages/2_Tesnifatlar_uzre.py
-import streamlit as st
+import re
 import pandas as pd
-from nvu.sections import section2_tesnifat  # sənin sayım funksiyanı istifadə edirik
+import streamlit as st
 
 df = st.session_state.get("df_clean")
 if df is None:
@@ -15,87 +15,96 @@ if COL not in df.columns:
     st.error(f"'{COL}' sütunu tapılmadı.")
     st.stop()
 
-# NK №61 (31.01.2024), 2 №-li əlavəyə uyğun qısa izah + güzəşt məbləği (AZN)
+# NK №61 – qısa izah + güzəşt (AZN)
 CLASS_INFO_BASE = {
-    # Sərnişindaşıma
     "M1": ("Oturacaq yerləri (sürücüdən əlavə) ≤ 8 — sərnişin", 1500),
     "M2": ("> 8 yer, icazə verilən kütlə ≤ 5 t — sərnişin", 2000),
     "M3": ("> 5 t — sərnişin", 3000),
-    # Yükdaşıma
     "N1": ("İcazə verilən kütlə ≤ 3.5 t — yük", 1500),
     "N2": ("3.5–12 t — yük", 2000),
     "N3": ("> 12 t — yük", 3000),
-    # Traktor / xüsusi texnika
     "T":  ("Traktorlar (təkərli)", 2000),
     "TK": ("Traktorlar (tırtıllı)", 2000),
     "TT": ("Traktorlar (digər)", 2000),
     "H":  ("Özügedən maşınlar (mexaniki ötürücülü)", 3000),
     "HT": ("Özügedən maşınlar (hidrostatik ötürücülü)", 3000),
     "HK": ("Meliorasiya/yol-tikinti maşınları, ekskavatorlar", 3000),
-    # Digər
     "L":  ("Kvadrisikllər və təkərləri dörddən az olanlar", 200),
 }
+_GABLE = {"M1","M2","M3","N1","N2","N3"}
 
-# G-variantları olan siniflər
-_GABLE = {"M1", "M2", "M3", "N1", "N2", "N3"}
-
-# FULL xəritə: BASE + G variantları (eyni məbləğ, açıqlamada "(yolsuzluq)")
+# FULL xəritə (G variantları)
 CLASS_INFO_FULL = CLASS_INFO_BASE.copy()
-for base in _GABLE:
-    desc, amt = CLASS_INFO_BASE[base]
-    CLASS_INFO_FULL[base + "G"] = (desc + " (yolsuzluq)", amt)
+for b in _GABLE:
+    d, a = CLASS_INFO_BASE[b]
+    CLASS_INFO_FULL[b+"G"] = (d+" (yolsuzluq)", a)
+
+VALID_CODES = sorted(CLASS_INFO_FULL.keys(), key=len, reverse=True)
+
+def extract_code(val: str) -> str:
+    """'M1 TƏSNİFATI' → 'M1', 'M1G TƏSNİFATI' → 'M1G', 'TK TƏSNİFATI' → 'TK'."""
+    s = str(val).upper().strip()
+    s = (s
+         .replace("TƏSNİFATI","")
+         .replace("TƏSNIFATI","")
+         .replace("TESNIFATI","")
+         .replace("TƏSNİFATİ","")
+         .replace("TƏSNİFAT","")).strip()
+    token = re.split(r"[\s\-/_,]+", s)[0] if s else ""
+    for c in VALID_CODES:                 # ən uzun kodu öncə yoxla (TK, HT, HK …)
+        if s.startswith(c) or token.startswith(c):
+            return c
+    return token
 
 def normalize_g(code: str) -> str:
-    s = str(code).strip().upper()
-    if s.endswith("G") and s[:-1] in _GABLE:
-        return s[:-1]
-    return s
+    x = str(code).upper()
+    return x[:-1] if x.endswith("G") and x[:-1] in _GABLE else x
 
-# ---- UI idarələri ----
+# İdarələr
 merge_g = st.toggle("**G variantlarını birləşdir** (M1+M1G, N1+N1G, ...)", value=True)
 calc_amounts = st.toggle("**Məbləğləri hesabla** (Cəmi AZN sütunu)", value=False)
 
-# ---- Sayım (sənin funksiyanla) ----
+# Kodları çıxar
+tmp = df.copy()
+tmp["_Kod"] = tmp[COL].apply(extract_code)
 if merge_g:
-    tmp = df.copy()
-    norm_col = "_Kod_norm"
-    tmp[norm_col] = tmp[COL].astype(str).apply(normalize_g)
-    tbl = section2_tesnifat(tmp, norm_col).copy()   # sütunlar: _Kod_norm, Say
-    src_col = norm_col
-    class_map = CLASS_INFO_BASE
-else:
-    tbl = section2_tesnifat(df, COL).copy()         # sütunlar: Təsnifat, Say
-    src_col = COL
-    class_map = CLASS_INFO_FULL
+    tmp["_Kod"] = tmp["_Kod"].apply(normalize_g)
 
-tbl.rename(columns={src_col: "Kod"}, inplace=True)
-tbl["Kod"] = tbl["Kod"].astype(str).str.strip().str.upper()
+# Sayım
+tbl = (tmp["_Kod"]
+       .dropna()
+       .astype(str)
+       .str.strip()
+       .str.upper()
+       .value_counts()
+       .rename_axis("Kod")
+       .reset_index(name="Say"))
 
-# ---- Açıqlama və Güzəşt sütunları əlavə et ----
-map_df = pd.DataFrame.from_dict(class_map, orient="index", columns=["Açıqlama", "Güzəşt (AZN)"]).reset_index().rename(columns={"index": "Kod"})
+# Xəritə ilə zənginləşdir
+class_map = CLASS_INFO_BASE if merge_g else CLASS_INFO_FULL
+map_df = pd.DataFrame.from_dict(class_map, orient="index",
+                                columns=["Açıqlama", "Güzəşt (AZN)"]).reset_index().rename(columns={"index":"Kod"})
 tbl = tbl.merge(map_df, on="Kod", how="left")
 tbl["Açıqlama"] = tbl["Açıqlama"].fillna("Rəsmi siyahıda yoxdur")
 tbl["Güzəşt (AZN)"] = tbl["Güzəşt (AZN)"].fillna(0).astype(int)
 
-# ---- Məbləğ hesablanması (opsional) ----
 if calc_amounts:
     tbl["Cəmi (AZN)"] = tbl["Say"] * tbl["Güzəşt (AZN)"]
-    show_cols = ["Kod", "Açıqlama", "Güzəşt (AZN)", "Say", "Cəmi (AZN)"]
+    show_cols = ["Kod","Açıqlama","Güzəşt (AZN)","Say","Cəmi (AZN)"]
 else:
-    show_cols = ["Kod", "Açıqlama", "Say"]
+    show_cols = ["Kod","Açıqlama","Say"]
 
-# Sıralama: Say azalan
-tbl = tbl.sort_values(by="Say", ascending=False)[show_cols].reset_index(drop=True)
+tbl = tbl.sort_values("Say", ascending=False)[show_cols].reset_index(drop=True)
 
-# ---- KPI-lar ----
+# KPI
 c1, c2, c3 = st.columns(3)
-c1.metric("Sətir sayı", f"{len(tbl):,}".replace(",", " "))
-total_nv = int(section2_tesnifat(df, COL)["Say"].sum())
-c2.metric("Ümumi NV (filtrdən sonra)", f"{total_nv:,}".replace(",", " "))
+c1.metric("Sətir sayı", f"{len(tbl):,}".replace(","," "))
+total_nv = len(tmp)                                  # hazır filtrdən sonra sətir sayı
+c2.metric("Ümumi NV (filtrdən sonra)", f"{total_nv:,}".replace(","," "))
 if calc_amounts and "Cəmi (AZN)" in tbl:
-    c3.metric("Ümumi məbləğ (AZN)", f"{int(tbl['Cəmi (AZN)'].sum()):,}".replace(",", " "))
+    c3.metric("Ümumi məbləğ (AZN)", f"{int(tbl['Cəmi (AZN)'].sum()):,}".replace(","," "))
 
-# ---- Cədvəl və endirmə ----
 st.dataframe(tbl, use_container_width=True)
-st.download_button("CSV kimi endir", data=tbl.to_csv(index=False).encode("utf-8-sig"),
+st.download_button("CSV kimi endir",
+                   data=tbl.to_csv(index=False).encode("utf-8-sig"),
                    file_name="tesnifatlar.csv", mime="text/csv")
