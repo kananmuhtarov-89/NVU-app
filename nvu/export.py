@@ -1,190 +1,116 @@
+from io import BytesIO
 from datetime import datetime
-import io
-import numpy as np
-import pandas as pd
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-
-from nvu.cleaning import _is_blank, to_decade_bins
-
-# -------------------------
-# Köməkçilər
-# -------------------------
-
-ALIASES = {
-    "applicant": ["Ərizəçi", "Ərizəçi adı", "Applicant", "Müştəri", "Musteri"],
-    "brand":     ["Marka", "Brand"],
-    "model":     ["Model"],
-    "color":     ["Rəng", "Reng", "Color"],
-    "year":      ["Buraxılış ili", "İl", "Il", "İlk qeyd ili", "FirstRegYear"],
-}
-
-def _find_col(df: pd.DataFrame, keys) -> str | None:
-    for k in keys:
-        if k in df.columns:
-            return k
-    lower = {str(c).lower(): c for c in df.columns}
-    for k in keys:
-        lk = str(k).lower()
-        if lk in lower:
-            return lower[lk]
-    return None
-
-def drop_blank_status_rows(df: pd.DataFrame, status_cols: list[str] | None):
-    """
-    Status sütun(lar)ında BLANK olan sətrləri çıxarır.
-    SABİT İSTİSNA KOD YOXDUR (952/938/955 və s. qalır).
-    """
-    if not status_cols:
-        return df
-    out = df.copy()
-    for c in status_cols or []:
-        if c and c in out.columns:
-            out = out.loc[~out[c].apply(_is_blank)]
-    return out
-
-def top_n_table(series: pd.Series, n: int, label: str) -> pd.DataFrame:
-    vc = (
-        series.astype(str)
-        .replace({"nan": "(bilinmir)", "None": "(bilinmir)", "": "(bilinmir)"})
-        .value_counts()
-        .head(n)
-        .reset_index()
-    )
-    vc.columns = [label, "Say"]
-    vc.insert(0, "Sıra №", range(1, len(vc) + 1))
-    return vc
-
-# -------------------------
-# DOCX format köməkçilər
-# -------------------------
-
-def _set_borderless(table):
-    tbl = table._element
-    tblPr = tbl.get_or_add_tblPr()
-    borders = tblPr.find(qn('w:tblBorders'))
-    if borders is None:
-        borders = OxmlElement('w:tblBorders')
-        tblPr.append(borders)
-    def nil(side):
-        e = OxmlElement(side); e.set(qn('w:val'), 'nil'); return e
-    for side in ['w:top','w:left','w:bottom','w:right','w:insideH','w:insideV']:
-        old = borders.find(qn(side))
-        if old is not None: borders.remove(old)
-        borders.append(nil(side))
-
-def _shade(cell, fill_hex="F2F2F2"):
-    tc = cell._tc
-    pr = tc.get_or_add_tcPr()
-    shd = OxmlElement('w:shd')
-    shd.set(qn('w:val'), 'clear')
-    shd.set(qn('w:color'), 'auto')
-    shd.set(qn('w:fill'), fill_hex)
-    pr.append(shd)
-
-def add_df_table(doc: Document, df: pd.DataFrame, title: str | None = None):
-    if title:
-        p = doc.add_paragraph(title)
-        p.runs[0].bold = True
-        p.runs[0].font.size = Pt(12)
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    rows, cols = df.shape
-    t = doc.add_table(rows=rows + 1, cols=cols)
-    # header
+import pandas as pd
+ACCENT = RGBColor(0x1F, 0x4E, 0x79)
+def _set_para_font(p, size=12, italic=False, bold=False, color=None, align=None, space_before=2, space_after=2):
+    if align is not None:
+        p.alignment = align
+    pf = p.paragraph_format
+    pf.space_before = Pt(space_before)
+    pf.space_after = Pt(space_after)
+    for run in p.runs:
+        run.font.name = "Arial"
+        run.font.size = Pt(size)
+        run.italic = italic
+        run.bold = bold
+        if color is not None:
+            run.font.color.rgb = color
+def _set_table_font(table, header_shade=True, compact=False, col_widths=None):
+    for i, row in enumerate(table.rows):
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                pf = p.paragraph_format
+                pf.space_before = Pt(1 if compact else 2)
+                pf.space_after = Pt(2 if compact else 3)
+                for run in p.runs:
+                    run.font.name = "Arial"
+                    run.font.size = Pt(12)
+                    if i == 0:
+                        run.bold = True
+                        run.font.color.rgb = ACCENT
+        if i == 0 and header_shade:
+            for cell in row.cells:
+                tcPr = cell._tc.get_or_add_tcPr()
+                shd = OxmlElement('w:shd')
+                shd.set(qn('w:fill'), "E9EFF7")
+                shd.set(qn('w:val'), "clear")
+                tcPr.append(shd)
+def _add_section_heading(doc, text):
+    cap = doc.add_paragraph(text)
+    _set_para_font(cap, size=14, bold=True, color=ACCENT, space_after=6)
+    try: cap.style = doc.styles['Heading 2']
+    except Exception: pass
+    return cap
+def _add_collapsible_subheading(doc, text):
+    sub = doc.add_paragraph(text)
+    _set_para_font(sub, size=13, bold=True, color=ACCENT, space_after=4)
+    try: sub.style = doc.styles['Heading 3']
+    except Exception: pass
+    return sub
+def _add_table(doc, df: pd.DataFrame, compact=False):
+    tbl = doc.add_table(rows=1, cols=len(df.columns))
+    hdr = tbl.rows[0].cells
     for j, col in enumerate(df.columns):
-        cell = t.cell(0, j)
-        cell.text = str(col)
-        for par in cell.paragraphs:
-            for run in par.runs:
-                run.font.bold = True
-                run.font.size = Pt(10.5)
-        _shade(cell)
-    # body
-    for i in range(rows):
-        for j in range(cols):
-            t.cell(i + 1, j).text = str(df.iat[i, j])
-    _set_borderless(t)
+        hdr[j].text = str(col)
+    for _, row in df.iterrows():
+        cells = tbl.add_row().cells
+        for j, col in enumerate(df.columns):
+            cells[j].text = str(row[col])
+    _set_table_font(tbl, header_shade=True, compact=compact)
     doc.add_paragraph("")
-
-# -------------------------
-# Report & Export
-# -------------------------
-
-def build_report(df: pd.DataFrame, session_state, *, status_cols: list[str] | None = None) -> dict:
-    df2 = drop_blank_status_rows(df, status_cols=status_cols)
-
-    # Sütun xəritəsi
-    col_app   = _find_col(df2, ALIASES["applicant"])
-    col_brand = _find_col(df2, ALIASES["brand"])
-    col_model = _find_col(df2, ALIASES["model"])
-    col_color = _find_col(df2, ALIASES["color"])
-    col_year  = _find_col(df2, ALIASES["year"])
-
-    # 10 illik intervallar
-    if col_year:
-        decade_bins = to_decade_bins(pd.to_numeric(df2[col_year], errors="coerce"))
-        decade_tbl = (
-            decade_bins[decade_bins != "Naməlum"]
-            .value_counts()
-            .sort_index()
-            .rename_axis("İllər (10 illik)")
-            .reset_index(name="Say")
-        )
-        decade_tbl.insert(0, "Sıra №", range(1, len(decade_tbl) + 1))
-    else:
-        decade_tbl = pd.DataFrame(columns=["Sıra №", "İllər (10 illik)", "Say"])
-
-    # Parametrlərdən Top-N
-    N_app   = int(session_state.get("param_topN_erizeci", 20))
-    N_brand = int(session_state.get("param_topN_marka",   20))
-    N_model = int(session_state.get("param_topN_model",   20))
-    N_color = int(session_state.get("param_topN_reng",    20))
-
-    report = {
-        "generated_at": datetime.now(),
-        "top_counts_meta": {"applicant": N_app, "brand": N_brand, "model": N_model, "color": N_color},
-        "tables": {"decades": decade_tbl}
-    }
-
-    if col_app:
-        report["tables"]["top_applicant"] = top_n_table(df2[col_app], N_app, col_app)
-    if col_brand:
-        report["tables"]["top_brand"] = top_n_table(df2[col_brand], N_brand, col_brand)
-    if col_model:
-        report["tables"]["top_model"] = top_n_table(df2[col_model], N_model, col_model)
-    if col_color:
-        report["tables"]["top_color"] = top_n_table(df2[col_color], N_color, col_color)
-
-    return report
-
-def export_docx(report: dict) -> bytes:
+    return tbl
+def export_docx(report: dict, source_filename: str) -> bytes:
     doc = Document()
-    style = doc.styles['Normal']
-    style.font.name = 'Arial'
-    style.font.size = Pt(10.5)
-
-    h = doc.add_paragraph("ESLİ – Arayış Hesabatı")
-    h.runs[0].bold = True
-    h.runs[0].font.size = Pt(14)
-    doc.add_paragraph(report['generated_at'].strftime("Tarix: %d.%m.%Y"))
-
-    # 10 illik
-    if (tbl := report["tables"].get("decades")) is not None and not tbl.empty:
-        add_df_table(doc, tbl, title="NV yaşları – 10 illik intervallar")
-
-    meta = report["top_counts_meta"]
-    if (tbl := report["tables"].get("top_applicant")) is not None:
-        add_df_table(doc, tbl, title=f"Top-Ərizəçi (Top-{meta['applicant']})")
-    if (tbl := report["tables"].get("top_brand")) is not None:
-        add_df_table(doc, tbl, title=f"Marka Top-{meta['brand']}")
-    if (tbl := report["tables"].get("top_model")) is not None:
-        add_df_table(doc, tbl, title=f"Modellər Top-{meta['model']}")
-    if (tbl := report["tables"].get("top_color")) is not None:
-        add_df_table(doc, tbl, title=f"Rəng Top-{meta['color']}")
-
-    bio = io.BytesIO()
-    doc.save(bio); bio.seek(0)
-    return bio.read()
+    doc.core_properties.title = "NVU Arayış"
+    title_p = doc.add_paragraph("NVU Utilizasiya — Arayış")
+    _set_para_font(title_p, size=18, bold=True, color=ACCENT, align=WD_ALIGN_PARAGRAPH.CENTER)
+    dt = datetime.now().strftime('%Y-%m-%d %H:%M')
+    _add = doc.add_paragraph; _set = _set_para_font
+    _set(_add(f"Hesabat tarixi: {dt}"), size=12, italic=True)
+    _set(_add(f"Mənbə fayl: {source_filename}"), size=12, italic=True)
+    doc.add_paragraph("")
+    for key, title in [
+        ("utilizator_counts","1) Utilizatorlar üzrə qəbul edilən NV sayları"),
+        ("tesnifat_counts","2) Təsnifatlar üzrə"),
+        ("tesdiq_status_totals","3) Təsdiqedici sənədin statusları — yekun"),
+        ("tehvil_status_totals","4) Təhvil-təslim sənədinin statusları — yekun"),
+        ("top50_erizeci","5) Top-50 Ərizəçi"),
+        ("top20_marka","6) Top-20 Marka"),
+        ("top20_model","7) Top-20 Model (uyğunlaşdırılmış)"),
+        ("top20_reng","8) Top-20 Rəng (uyğunlaşdırılmış)"),
+        ("region_counts","9) Region paylanması (NV nömrəsinə görə)"),
+        ("year_bins","10) NV-lərin yaş strukturu (10 illik dövrlərlə)"),
+    ]:
+        df = report.get(key)
+        if df is not None and not df.empty:
+            _add_section_heading(doc, title)
+            if key=="top50_erizeci":
+                top20=df.head(20); _add_table(doc, top20, compact=True)
+                rest=df.iloc[20:]
+                if not rest.empty:
+                    _add_collapsible_subheading(doc,"Daha çox (21–50)")
+                    _add_table(doc, rest, compact=True)
+            elif key=="region_counts":
+                df=df.sort_values("Say", ascending=False)
+                top10=df.head(10); _add_table(doc, top10, compact=True)
+                rest=df.iloc[10:]
+                if not rest.empty:
+                    _add_collapsible_subheading(doc,f"Daha çox (11–{len(df)})")
+                    _add_table(doc, rest, compact=True)
+            else:
+                _add_table(doc, df, compact=True)
+    doc.add_paragraph("")
+    _set(doc.add_paragraph("K.M"), size=12, align=WD_ALIGN_PARAGRAPH.RIGHT)
+    bio = BytesIO(); doc.save(bio); return bio.getvalue()
+def export_xlsx(report: dict) -> bytes:
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as w:
+        for k, df in report.items():
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                df.to_excel(w, sheet_name=str(k)[:31], index=False)
+    return bio.getvalue()
