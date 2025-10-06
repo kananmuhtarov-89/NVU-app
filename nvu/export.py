@@ -8,15 +8,37 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # -------------------- Köməkçilər --------------------
 def _fmt_int(x: Optional[int]) -> str:
-    if x is None: return "—"
+    if x is None:
+        return "—"
     return f"{int(x):,}".replace(",", " ")
 
 def _make_table_borderless(table):
-    # python-docx ilə borderləri söndürmək üçün minimal yol
-    tbl = table._tbl
-    tblPr = tbl.tblPr
-    for el in tblPr.xpath("./w:tblBorders", namespaces=tblPr.nsmap):
-        tblPr.remove(el)
+    """
+    Word cədvəlində sərhədləri (grid) söndürmək üçün stabil metod.
+    Bəzi mühitlərdə python-docx tblPr və ya nsmap qaytarmadığından,
+    həm None hallarını, həm də namespace-i manuel idarə edirik.
+    Uğursuz olarsa, export dayanmasın deyə səssiz ötürürük.
+    """
+    try:
+        tbl = table._tbl
+        # tblPr None ola bilər — bu halda yaradıb geri qaytarır
+        tblPr = getattr(tbl, "tblPr", None)
+        if tblPr is None and hasattr(tbl, "get_or_add_tblPr"):
+            tblPr = tbl.get_or_add_tblPr()
+
+        if tblPr is None:
+            # heç olmasa heç nə etmədən çıxaq (sənəd yenə də yaranacaq)
+            return
+
+        # Namespace-i əl ilə veririk (w:)
+        NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+        # Mövcud sərhəd elementlərini sil
+        for el in tblPr.xpath("./w:tblBorders", namespaces=NS):
+            tblPr.remove(el)
+    except Exception:
+        # Stil söndürmə uğursuz olsa belə, export davam etsin
+        pass
 
 def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> None:
     dfx = df.copy()
@@ -58,10 +80,10 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     util = report.get("utilizator_counts", pd.DataFrame())
     if isinstance(util, pd.DataFrame) and not util.empty:
         if util.shape[1] >= 2:
-            total = int(util.iloc[:,1].sum())
+            total = int(util.iloc[:, 1].sum())
             util_out = util.copy()
             util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
-            util_out.loc[len(util_out)-1, util_out.columns[1]] = total
+            util_out.loc[len(util_out) - 1, util_out.columns[1]] = total
         else:
             util_out = util.copy()
         _add_table(doc, util_out, add_rownum=False)
@@ -74,39 +96,41 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     ready = report.get("tesnifat_table")
     if isinstance(ready, pd.DataFrame) and not ready.empty:
         # yalnız lazım olan sütunlar; Açıqlama yoxdur
-        pref = ["Kod","Təsnifat","Say"] + (["Cəmi (AZN)"] if calc else [])
+        pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
         t = _subset(ready, pref)
         # ehtiyat: əgər sadəcə "Kod" yoxdursa "Təsnifat"dan istifadə
         if "Kod" not in t.columns and "Təsnifat" in t.columns:
-            t = t.rename(columns={"Təsnifat":"Kod"})
-        t = t[["Kod","Say"] + (["Cəmi (AZN)"] if calc and "Cəmi (AZN)" in t.columns else [])]
+            t = t.rename(columns={"Təsnifat": "Kod"})
+        t = t[["Kod", "Say"] + (["Cəmi (AZN)"] if calc and "Cəmi (AZN)" in t.columns else [])]
         _add_table(doc, t, add_rownum=False)
         if "Say" in t.columns:
-            p = doc.add_paragraph(); p.add_run(f"Cəm say: {_fmt_int(int(t['Say'].sum()))}").bold = True
+            p = doc.add_paragraph()
+            p.add_run(f"Cəm say: {_fmt_int(int(t['Say'].sum()))}").bold = True
         if calc and "Cəmi (AZN)" in t.columns:
-            p = doc.add_paragraph(); p.add_run(f"Ümumi məbləğ (AZN): {_fmt_int(int(t['Cəmi (AZN)'].sum()))}").bold = True
+            p = doc.add_paragraph()
+            p.add_run(f"Ümumi məbləğ (AZN): {_fmt_int(int(t['Cəmi (AZN)'].sum()))}").bold = True
     else:
         base = report.get("tesnifat_counts", pd.DataFrame())
-        t = _subset(base, ["Təsnifat","Say"])
+        t = _subset(base, ["Təsnifat", "Say"])
         _add_table(doc, t, add_rownum=False)
 
     # 3+) Digər bölmələr – dinamik başlıqlar + Sıra №
     meta = report.get("top_counts_meta", {})
     sections = [
         ("3) Təsdiqedici Statusları", "tesdiq_status_totals",
-         ["Təsdiq edici sənədin statusu","Say"], False),
+         ["Təsdiq edici sənədin statusu", "Say"], False),
         ("4) TT aktların Statusları", "tehvil_status_totals",
-         ["Təhvil-təslim sənədinin statusu","Say"], False),
+         ["Təhvil-təslim sənədinin statusu", "Say"], False),
         (f"5) Top {meta.get('erizeci_N', 50)} Ərizəçi", "top_erizeci",
-         ["Ərizəçinin tam adı","Say"], True),
+         ["Ərizəçinin tam adı", "Say"], True),
         (f"6) Marka Top {meta.get('marka_N', 20)}", "top_marka",
-         ["Marka","Say"], True),
+         ["Marka", "Say"], True),
         (f"7) Modellər üzrə Top {meta.get('model_N', 10)}", "top_model",
-         ["Marka","Model","Say"], True),
+         ["Marka", "Model", "Say"], True),
         (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng",
-         ["Rəng","Say"], True),
+         ["Rəng", "Say"], True),
         ("9) NV yaşları 10illik intervallarda", "year_bins",
-         ["Buraxılış ili","Say"], False),
+         ["Buraxılış ili", "Say"], False),
     ]
     for title, key, pref, add_no in sections:
         doc.add_heading(title, level=2)
@@ -116,7 +140,8 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         else:
             doc.add_paragraph("Məlumat yoxdur.")
 
-    bio = BytesIO(); doc.save(bio)
+    bio = BytesIO()
+    doc.save(bio)
     return bio.getvalue()
 
 # -------------------- XLSX --------------------
@@ -132,7 +157,7 @@ def export_xlsx(report: Dict[str, Any]) -> bytes:
         if isinstance(util, pd.DataFrame) and not util.empty and util.shape[1] >= 2:
             util2 = util.copy()
             util2.loc[len(util2), util2.columns[0]] = "CƏM"
-            util2.loc[len(util2)-1, util2.columns[1]] = int(util.iloc[:,1].sum())
+            util2.loc[len(util2) - 1, util2.columns[1]] = int(util.iloc[:, 1].sum())
             util2.to_excel(xw, sheet_name="utilizator_counts", index=False)
 
         # Təsnifat: hazır cədvəl yoxdursa baza yaz
@@ -140,6 +165,8 @@ def export_xlsx(report: Dict[str, Any]) -> bytes:
         if not (isinstance(tbl, pd.DataFrame) and not tbl.empty):
             base = report.get("tesnifat_counts", pd.DataFrame())
             if isinstance(base, pd.DataFrame) and not base.empty:
-                _subset(base, ["Təsnifat","Say"]).to_excel(xw, sheet_name="tesnifatlar", index=False)
+                _subset(base, ["Təsnifat", "Say"]).to_excel(
+                    xw, sheet_name="tesnifatlar", index=False
+                )
 
     return bio.getvalue()
