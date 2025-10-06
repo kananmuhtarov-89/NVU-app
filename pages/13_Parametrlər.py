@@ -21,7 +21,10 @@ with col2:
 # ---- Digər Parametrlər ----
 st.markdown("#### ⚙️ Digər parametrlər")
 
+# Variant 1: default = blanklar göstərilmir
 st.session_state.setdefault("param_include_blanks", False)
 st.session_state["param_include_blanks"] = st.toggle(
-    "Boş sətrləri göstər", st.session_state["param_include_blanks"]
+    "Boş sətrləri göstər (tövsiyə olunmur)", st.session_state["param_include_blanks"]
 )
+
+st.info("Top-N dəyərləri UI və Word hesabatında eyni tətbiq olunur. Blank sətrlər default olaraq gizlədilir.")
