@@ -12,25 +12,35 @@ from docx.oxml.ns import qn
 # =========================
 # VİZUAL PARAMETRLƏR (BURADA DƏYİŞ)
 # =========================
-COLOR_H1 = RGBColor(0x1F, 0x4E, 0x79)      # #1F4E79
-COLOR_H2 = RGBColor(0x2E, 0x75, 0xB6)      # #2E75B6
-COLOR_HEADER_BG = "D9E1F2"                 # cədvəl başlığı fonu
-COLOR_TOTAL_BG  = "FCE4D6"                 # yekun sətir fonu
+# Rəng palitrası
+COLOR_H1 = RGBColor(0x1F, 0x4E, 0x79)       # #1F4E79 (tünd mavi)
+COLOR_H2 = RGBColor(0x2E, 0x75, 0xB6)       # #2E75B6 (mavi)
+COLOR_HEADER_BG = "D9E1F2"                  # cədvəl başlığı fonu
+COLOR_TOTAL_BG  = "FCE4D6"                  # yekun sətir fonu
+COLOR_ZEBRA_BG  = "F7F9FC"                  # zolaqlama
 COLOR_DIVIDER   = RGBColor(0xD0, 0xD0, 0xD0)
 
+# Top bölmələr üçün başlıq rəngləri (bonus)
+COLOR_TOP_ERIZECI = RGBColor(0x23, 0x8E, 0x6E)  # yaşıl ton
+COLOR_TOP_MARKA   = RGBColor(0x2E, 0x75, 0xB6)  # mavi ton
+COLOR_TOP_MODEL   = RGBColor(0x7F, 0x60, 0xA8)  # bənövşəyi ton
+COLOR_TOP_RENG    = RGBColor(0xC0, 0x58, 0x50)  # narıncı-qırmızı ton
+
+# Şrift ölçüləri
 FONT_NAME       = "Arial"
 FONT_SIZE_BODY  = Pt(10.5)
 FONT_SIZE_H1    = Pt(14)
 FONT_SIZE_H2    = Pt(12)
 
+# Sətirarası məsafə və boşluqlar
 PARAGRAPH_SPACING_BEFORE = Pt(12)
 PARAGRAPH_SPACING_AFTER  = Pt(6)
 LINE_SPACING             = 1.15
 
-# Üst/altbilgi mətnləri
+# Üst/altbilgi
 HEADER_TITLE     = "NVU — Utilizasiya Proqramı üzrə Yekun Hesabat"
 FOOTER_LEFT_TEXT = "Təmiz Şəhər ASC — NV Utilizasiya şöbəsi"
-# Altbilgidə sağda avtomatik: Tarix: YYYY-MM-DD
+# Altbilgidə sağda avtomatik: Tarix: YYYY-MM-DD (sənəd № YOX)
 
 # =========================
 # KÖMƏKÇİ FUNKSİYALAR
@@ -83,7 +93,8 @@ def _add_divider_line(doc: Document):
     run.font.size = Pt(8)
     return p
 
-def _add_heading(doc: Document, text: str, level: int = 1):
+def _add_heading(doc: Document, text: str, level: int = 1, color: RGBColor | None = None):
+    """Rəngli heading (H1/H2). `color` verilərsə, onu istifadə edir."""
     p = doc.add_paragraph()
     _set_paragraph_format(p)
     run = p.add_run(text)
@@ -91,10 +102,10 @@ def _add_heading(doc: Document, text: str, level: int = 1):
     run.font.name = FONT_NAME
     if level == 1:
         run.font.size = FONT_SIZE_H1
-        run.font.color.rgb = COLOR_H1
+        run.font.color.rgb = color if color else COLOR_H1
     else:
         run.font.size = FONT_SIZE_H2
-        run.font.color.rgb = COLOR_H2
+        run.font.color.rgb = color if color else COLOR_H2
     return p
 
 def _add_report_date_line(doc: Document, report_date: str):
@@ -163,7 +174,32 @@ def _drop_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
         mask = mask & ~(col_vals.isna() | (col_vals.astype(str).str.strip().isin(["", "—", "-", "None", "nan"])))
     return df[mask]
 
-def _add_table_from_df(doc: Document, df: pd.DataFrame, highlight_total_rows=True, zebra=True):
+def _iconize_headers(headers: list[str]) -> list[str]:
+    """
+    BONUS: cədvəl başlıqlarına uyğun ikonlar əlavə edir.
+    """
+    out = []
+    for h in headers:
+        h_low = h.lower()
+        if "statusu" in h_low or "status" in h_low:
+            out.append(f"📄 {h}")
+        elif h.strip().lower() in {"marka"}:
+            out.append(f"🚗 {h}")
+        elif h.strip().lower() in {"rəng", "reng"}:
+            out.append(f"🎨 {h}")
+        else:
+            out.append(h)
+    return out
+
+def _add_table_from_df(doc: Document, df: pd.DataFrame, highlight_total_rows=True, zebra=True, iconize=True):
+    """
+    DF-dən borderless cədvəl:
+     - başlıq sətri açıq mavi fon + bold
+     - ədədi sütunlar sağa hizalı, minlik ayırıcı
+     - zebra (alternating row)
+     - 'CƏM' tipli sətirlər vurğulanır
+     - BONUS: başlıqlara ikon (istəyə görə)
+    """
     if df is None or df.empty:
         p = doc.add_paragraph("(Məlumat yoxdur)")
         _set_paragraph_format(p)
@@ -178,25 +214,28 @@ def _add_table_from_df(doc: Document, df: pd.DataFrame, highlight_total_rows=Tru
     table = doc.add_table(rows=rows + 1, cols=cols)
     _set_table_borderless(table)
 
-    # Header row
-    for j, col in enumerate(df.columns):
+    # Başlıq sətri
+    headers = list(df.columns)
+    if iconize:
+        headers = _iconize_headers(headers)
+    for j, col in enumerate(headers):
         cell = table.cell(0, j)
         cell.text = str(col)
         _set_cell_shading(cell, COLOR_HEADER_BG)
         _format_cell_text(cell, bold=True, align_right=False)
 
-    # Body
+    # Data sətirləri
     for i in range(rows):
         for j in range(cols):
             cell = table.cell(i + 1, j)
             val = "" if pd.isna(df.iat[i, j]) else str(df.iat[i, j])
             cell.text = val
             if zebra and (i % 2 == 1):
-                _set_cell_shading(cell, "F7F9FC")
+                _set_cell_shading(cell, COLOR_ZEBRA_BG)
             align_right = (df.columns[j] in numeric_cols)
             _format_cell_text(cell, bold=False, align_right=align_right)
 
-    # Highlight total rows
+    # Yekun sətirlərinin vurğulanması
     if highlight_total_rows:
         total_keywords = {"CƏM", "Cem", "Cəm", "Cəm say", "Cem say", "Cəm Say"}
         first_col = df.columns[0]
@@ -229,6 +268,7 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     - 'Hesabat tarixi' qırmızı
     - Borderless cədvəllər, başlıq fonu, zebra, yekun vurğusu
     - Üst/altbilgi (alt: yalnız tarix)
+    - BONUS: ikonlu cədvəl başlıqları, Top bölmələr üçün fərqli başlıq rəngi
     """
     doc = Document()
     _set_document_defaults(doc)
@@ -236,6 +276,7 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     report_date = report.get("report_date") or datetime.now().strftime("%Y-%m-%d")
     _add_header_footer(doc, report_date)
 
+    # Başlıq və Hesabat tarixi
     _add_heading(doc, "NVU Arayış Paneli — Hesabat", level=1)
     _add_report_date_line(doc, report_date)
 
@@ -252,8 +293,10 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     # 2) Təsnifatlar
     _add_heading(doc, "2) Təsnifatlar üzrə — yekun", level=1)
     _add_divider_line(doc)
-    tesnifat_df = report.get("tesnifat_table") or report.get("tesnifat_counts")
-    if tesnifat_df is not None:
+    tesnifat_df = report.get("tesnifat_table")
+    if tesnifat_df is None:
+        tesnifat_df = report.get("tesnifat_counts")
+    if tesnifat_df is not None and hasattr(tesnifat_df, "empty") and not tesnifat_df.empty:
         cols = list(tesnifat_df.columns)
         if cols:
             cols[0] = "Təsnifat"
@@ -267,7 +310,7 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     _add_heading(doc, "3) Təsdiqedici sənədin statusları — yekun", level=1)
     _add_divider_line(doc)
     tesdiq_df = report.get("tesdiq_status_totals")
-    if tesdiq_df is not None:
+    if tesdiq_df is not None and hasattr(tesdiq_df, "empty") and not tesdiq_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(tesdiq_df))
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
@@ -276,43 +319,43 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     _add_heading(doc, "4) Təhvil-təslim sənədinin statusları — yekun", level=1)
     _add_divider_line(doc)
     tehvil_df = report.get("tehvil_status_totals")
-    if tehvil_df is not None:
+    if tehvil_df is not None and hasattr(tehvil_df, "empty") and not tehvil_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(tehvil_df))
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
 
-    # 5) Top 15 Ərizəçi
-    _add_heading(doc, "5) Top 15 Ərizəçi", level=1)
+    # 5) Top 15 Ərizəçi (başlıq rəngi: yaşıl)
+    _add_heading(doc, "5) Top 15 Ərizəçi", level=1, color=COLOR_TOP_ERIZECI)
     _add_divider_line(doc)
     top_erizeci_df = report.get("top_erizeci")
-    if top_erizeci_df is not None:
+    if top_erizeci_df is not None and hasattr(top_erizeci_df, "empty") and not top_erizeci_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(top_erizeci_df))
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
 
-    # 6) Marka Top 10
-    _add_heading(doc, "6) Marka Top 10", level=1)
+    # 6) Marka Top 10 (başlıq rəngi: mavi)
+    _add_heading(doc, "6) Marka Top 10", level=1, color=COLOR_TOP_MARKA)
     _add_divider_line(doc)
     top_marka_df = report.get("top_marka")
-    if top_marka_df is not None:
+    if top_marka_df is not None and hasattr(top_marka_df, "empty") and not top_marka_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(top_marka_df))
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
 
-    # 7) Modellər Top 10
-    _add_heading(doc, "7) Modellər üzrə Top 10", level=1)
+    # 7) Modellər üzrə Top 10 (başlıq rəngi: bənövşəyi)
+    _add_heading(doc, "7) Modellər üzrə Top 10", level=1, color=COLOR_TOP_MODEL)
     _add_divider_line(doc)
     top_model_df = report.get("top_model")
-    if top_model_df is not None:
+    if top_model_df is not None and hasattr(top_model_df, "empty") and not top_model_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(top_model_df))
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
 
-    # 8) Rəng Top 10
-    _add_heading(doc, "8) Rəng Top 10", level=1)
+    # 8) Rəng Top 10 (başlıq rəngi: narıncı-qırmızı)
+    _add_heading(doc, "8) Rəng Top 10", level=1, color=COLOR_TOP_RENG)
     _add_divider_line(doc)
     top_reng_df = report.get("top_reng")
-    if top_reng_df is not None:
+    if top_reng_df is not None and hasattr(top_reng_df, "empty") and not top_reng_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(top_reng_df))
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
@@ -321,9 +364,9 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     _add_heading(doc, "9) NV yaşları 10 illik intervallarda — yekun", level=1)
     _add_divider_line(doc)
     year_bins_df = report.get("year_bins")
-    if year_bins_df is not None:
+    if year_bins_df is not None and hasattr(year_bins_df, "empty") and not year_bins_df.empty:
         _add_table_from_df(doc, _drop_blank_rows(year_bins_df))
-        _add_small_caption(doc, "Qeyd: “1110–1119” anomaliyadır (mənbə yazılışı).")
+        _add_small_caption(doc, 'Qeyd: “1110–1119” intervalı anomaliyadır (mənbə yazılışı).')
     else:
         _add_small_caption(doc, "(Məlumat yoxdur)")
 
@@ -333,52 +376,44 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     return bio.getvalue()
 
 # =========================
-# XLSX EXPORT (YENİDƏN ƏLAVƏ EDİLDİ)
+# XLSX EXPORT
 # =========================
 def export_xlsx(report: dict) -> bytes:
     """
     XLSX export:
     - Hər bölmə ayrı vərəqdə
     - Utilizatorlar üçün CƏM sətiri yoxdursa, avtomatik əlavə olunur
-    - DataFrame-lər olduğu kimi yazılır (formatlama minimal)
     """
-    # Pandas ExcelWriter (openpyxl) ilə bytes-a yazırıq
     from pandas import ExcelWriter
 
-    # Köməkçi: util cədvəlində CƏM sətirini təmin et
     def _with_total_row(df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
             return df
         tmp = df.copy()
-        # Son sütun ədədi kimi qəbul edək
         num_cols = [c for c in tmp.columns if pd.api.types.is_numeric_dtype(tmp[c])]
         if not num_cols:
             return tmp
-        # Ən uyğun ədədi sütun: sonuncu ədədi sütun
-        num_col = num_cols[-1]
-        if str(tmp.iloc[-1][tmp.columns[0]]).strip().upper().startswith("CƏM"):
+        first_col = tmp.columns[0]
+        # Artıq CƏM varsa, keç
+        if str(tmp.iloc[-1][first_col]).strip().upper().startswith("CƏM"):
             return tmp
-        total = tmp[num_col].sum()
-        total_label = "CƏM"
-        # Yeni sətir
+        total_col = num_cols[-1]
+        total = tmp[total_col].sum()
         new_row = {col: "" for col in tmp.columns}
-        new_row[tmp.columns[0]] = total_label
-        new_row[num_col] = total
-        tmp = pd.concat([tmp, pd.DataFrame([new_row])], ignore_index=True)
-        return tmp
+        new_row[first_col] = "CƏM"
+        new_row[total_col] = total
+        return pd.concat([tmp, pd.DataFrame([new_row])], ignore_index=True)
 
-    # Writer yarat
     output = BytesIO()
     with ExcelWriter(output, engine="openpyxl") as writer:
-        # 1) Utilizatorlar
         df = report.get("utilizator_counts")
         if df is not None:
             _with_total_row(df).to_excel(writer, index=False, sheet_name="1_Utilizatorlar")
 
-        # 2) Təsnifat
-        df = report.get("tesnifat_table") or report.get("tesnifat_counts")
+        df = report.get("tesnifat_table")
+        if df is None:
+            df = report.get("tesnifat_counts")
         if df is not None:
-            # 1-ci sütun adı Təsnifat kimi çıxsın
             cols = list(df.columns)
             if cols:
                 cols[0] = "Təsnifat"
@@ -386,48 +421,38 @@ def export_xlsx(report: dict) -> bytes:
                 df.columns = cols
             df.to_excel(writer, index=False, sheet_name="2_Tesnifat")
 
-        # 3) Təsdiq statusları
         df = report.get("tesdiq_status_totals")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="3_Tesdiq_Status")
 
-        # 4) Təhvil statusları
         df = report.get("tehvil_status_totals")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="4_Tehvil_Status")
 
-        # 5) Ərizəçi Top N
         df = report.get("top_erizeci")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="5_Top_Erizeci")
 
-        # 6) Marka Top N
         df = report.get("top_marka")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="6_Top_Marka")
 
-        # 7) Model Top N
         df = report.get("top_model")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="7_Top_Model")
 
-        # 8) Rəng Top N
         df = report.get("top_reng")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="8_Top_Reng")
 
-        # 9) Yaş intervalları
         df = report.get("year_bins")
         if df is not None:
             df.to_excel(writer, index=False, sheet_name="9_Yas_Intervallar")
 
-        # 10) Parametrlər (Top-N metası)
         meta = report.get("top_counts_meta")
         if meta:
-            meta_df = pd.DataFrame([meta])
-            meta_df.to_excel(writer, index=False, sheet_name="10_Param_TopN")
+            pd.DataFrame([meta]).to_excel(writer, index=False, sheet_name="10_Param_TopN")
 
-        # 11) Hesabat tarixi
         dt = report.get("report_date") or datetime.now().strftime("%Y-%m-%d")
         pd.DataFrame([{"Hesabat tarixi": dt}]).to_excel(writer, index=False, sheet_name="11_Info")
 
