@@ -51,15 +51,16 @@ def normalize_g(code: str) -> str:
     return x[:-1] if x.endswith("G") and x[:-1] in GABLE else x
 
 # ---- Defaults: toggle-lar ilk dəfə ON gəlsin ----
-if "tesnifat_merge" not in st.session_state:
-    st.session_state["tesnifat_merge"] = True
-if "tesnifat_calc" not in st.session_state:
-    st.session_state["tesnifat_calc"] = True
+st.session_state.setdefault("tesnifat_merge", True)
+st.session_state.setdefault("tesnifat_calc",  True)
 
 merge_g = st.toggle("**Təsnifatları birləşdir** (M1+M1G, N1+N1G, ...)",
-                    key="tesnifat_merge", value=st.session_state["tesnifat_merge"])
+                    key="tesnifat_merge",
+                    value=st.session_state["tesnifat_merge"])
+
 calc_amounts = st.toggle("**Məbləğləri hesabla** (Cəmi AZN sütunu)",
-                         key="tesnifat_calc", value=st.session_state["tesnifat_calc"])
+                         key="tesnifat_calc",
+                         value=st.session_state["tesnifat_calc"])
 
 # ---- Hesablama ----
 COL = "Təsnifat"
@@ -72,7 +73,6 @@ tmp["Kod"] = tmp[COL].apply(extract_code)
 if merge_g:
     tmp["Kod"] = tmp["Kod"].apply(normalize_g)
 
-# sayım
 tbl = (tmp["Kod"]
        .dropna().astype(str).str.strip().str.upper()
        .value_counts()
@@ -98,7 +98,7 @@ tbl = tbl.sort_values("Say", ascending=False)[show_cols].reset_index(drop=True)
 # KPI-lar
 c1, c2, c3 = st.columns(3)
 c1.metric("Sətir sayı", f"{len(tbl):,}".replace(","," "))
-c2.metric("Ümumi NV", f"{len(tmp):,}".replace(","," "))
+c2.metric("Ümumi NV (filtrdən sonra)", f"{len(tmp):,}".replace(","," "))
 if calc_amounts and "Cəmi (AZN)" in tbl.columns:
     c3.metric("Ümumi məbləğ (AZN)", f"{int(tbl['Cəmi (AZN)'].sum()):,}".replace(","," "))
 
@@ -112,10 +112,3 @@ else:
     tbl_export = tbl_export[["Kod","Say"]]
 
 st.session_state["tesnifat_table"] = tbl_export
-st.session_state["tesnifat_merge"] = merge_g
-st.session_state["tesnifat_calc"] = calc_amounts
-
-# CSV endirmə (opsional)
-st.download_button("CSV kimi endir",
-                   data=tbl_export.to_csv(index=False).encode("utf-8-sig"),
-                   file_name="tesnifatlar.csv", mime="text/csv")
