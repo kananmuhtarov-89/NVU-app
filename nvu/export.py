@@ -1,192 +1,197 @@
-# nvu/export.py
-import re
-from io import BytesIO
-from typing import Dict, Any, Optional
-
+# nvu/export.py — v3 (blank-only filter, no hardcoded codes)
+from datetime import datetime
+import io
+import numpy as np
 import pandas as pd
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
+# ——— “boş” kimi qəbul edilən markerlər
+BLANK_MARKERS = {None, "", " ", "-", "—", "–", "NA", "N/A", "None", "\xa0"}
 
-# ------------------------------ Köməkçilər ------------------------------
-def _fmt_int(x: Optional[int]) -> str:
-    if x is None:
-        return "—"
-    return f"{int(x):,}".replace(",", " ")
-
-def _add_table(doc: Document, df: pd.DataFrame) -> None:
-    table = doc.add_table(rows=1, cols=len(df.columns))
-    table.style = "Table Grid"
-    hdr = table.rows[0].cells
-    for i, col in enumerate(df.columns):
-        p = hdr[i].paragraphs[0]
-        r = p.add_run(str(col))
-        r.bold = True
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    for _, row in df.iterrows():
-        cells = table.add_row().cells
-        for j, col in enumerate(df.columns):
-            val = row[col]
-            cells[j].text = "" if pd.isna(val) else str(val)
-
-def _subset(df: pd.DataFrame, preferred_cols) -> pd.DataFrame:
-    cols = [c for c in preferred_cols if c in df.columns]
-    return df[cols].copy() if cols else df.copy()
-
-# ------------------------ Təsnifat xəritəsi (fallback) -------------------
-_CLASS_INFO_BASE = {
-    "M1": ("Oturacaq yerləri (sürücüdən əlavə) ≤ 8 — sərnişin", 1500),
-    "M2": ("> 8 yer, icazə verilən kütlə ≤ 5 t — sərnişin", 2000),
-    "M3": ("> 5 t — sərnişin", 3000),
-    "N1": ("İcazə verilən kütlə ≤ 3.5 t — yük", 1500),
-    "N2": ("3.5–12 t — yük", 2000),
-    "N3": ("> 12 t — yük", 3000),
-    "T":  ("Traktorlar (təkərli)", 2000),
-    "TK": ("Traktorlar (tırtıllı)", 2000),
-    "TT": ("Traktorlar (digər)", 2000),
-    "H":  ("Özügedən maşınlar (mexaniki ötürücülü)", 3000),
-    "HT": ("Özügedən maşınlar (hidrostatik ötürücülü)", 3000),
-    "HK": ("Meliorasiya/yol-tikinti maşınları, ekskavatorlar", 3000),
-    "L":  ("Kvadrisikllər və təkərləri dörddən az olanlar", 200),
+ALIASES = {
+    "applicant": ["Ərizəçi", "Erizeci", "Applicant", "Müştəri", "Musteri"],
+    "brand":     ["Marka", "Brand"],
+    "model":     ["Model"],
+    "color":     ["Rəng", "Reng", "Color"],
+    "year":      ["Buraxılış ili", "İl", "Il", "İlk qeyd ili", "FirstRegYear"],
 }
-_GABLE = {"M1","M2","M3","N1","N2","N3"}
 
-def _fallback_tesnifat(df_counts: pd.DataFrame, settings: Dict[str, Any]) -> pd.DataFrame:
-    """Təsnifat (string) → Kod çıxar, G-ləri birləşdir (istəyə görə), Say (+ Cəmi)."""
-    merge_g = bool(settings.get("merge_g", True))
-    calc     = bool(settings.get("calc_amounts", False))
+# ——— Util
+def _find_col(df: pd.DataFrame, keys):
+    for k in keys:
+        if k in df.columns:
+            return k
+    lower = {c.lower(): c for c in df.columns}
+    for k in keys:
+        if k.lower() in lower:
+            return lower[k.lower()]
+    return None
 
-    VALID = set(_CLASS_INFO_BASE.keys()) | {k+"G" for k in _GABLE}
+def _is_blank(x) -> bool:
+    if pd.isna(x):
+        return True
+    if isinstance(x, str) and x.strip() in BLANK_MARKERS:
+        return True
+    return False
 
-    def _extract_code(val: str) -> str:
-        s = str(val).upper().strip()
-        for bad in ("TƏSNİFATI","TƏSNIFATI","TESNIFATI","TƏSNİFATİ","TƏSNİFAT"):
-            s = s.replace(bad, "")
-        s = s.strip()
-        token = re.split(r"[\s\-/_,]+", s)[0] if s else ""
-        for k in sorted(VALID, key=len, reverse=True):
-            if s.startswith(k) or token.startswith(k):
-                return k
-        return token
+def drop_blank_status_rows(df: pd.DataFrame, status_cols: list[str] | None):
+    """Status sütun(lar)ında BLANK olan sətrləri çıxarır. SABİT KOD YOXDUR."""
+    if not status_cols:
+        return df
+    out = df.copy()
+    for c in status_cols or []:
+        if c and c in out.columns:
+            out = out.loc[~out[c].apply(_is_blank)]
+    return out
 
-    if df_counts.empty:
-        return pd.DataFrame(columns=["Təsnifat","Say"])
+def ensure_decade_bins(df: pd.DataFrame) -> pd.Series:
+    """Buraxılış ilini 10 illik zolaqlara çevirir: 1970–1979, 1980–1989, …"""
+    year_col = _find_col(df, ALIASES["year"])
+    years = pd.to_numeric(df.get(year_col, pd.Series(index=df.index)), errors="coerce")
+    def lab(y):
+        if np.isnan(y):
+            return None
+        d = int(y // 10 * 10)
+        return f"{d}–{d+9}"
+    return years.apply(lab)
 
-    df = df_counts.copy()
-    if "Təsnifat" not in df.columns:
-        df.columns = ["Təsnifat","Say"][:len(df.columns)]
-    df["Təsnifat"] = df["Təsnifat"].apply(_extract_code)
-    if merge_g:
-        df["Təsnifat"] = df["Təsnifat"].str.replace(r"^([MN][123])G$", r"\\1", regex=True)
+def top_n_table(series: pd.Series, n: int, colname: str) -> pd.DataFrame:
+    vc = (
+        series.astype(str)
+        .replace({"nan": "(bilinmir)", "None": "(bilinmir)", "": "(bilinmir)"})
+        .value_counts()
+        .head(n)
+        .reset_index()
+    )
+    vc.columns = [colname, "Say"]
+    vc.insert(0, "Sıra №", range(1, len(vc) + 1))
+    return vc
 
-    out = df.groupby("Təsnifat", as_index=False)["Say"].sum().sort_values("Say", ascending=False)
+# ——— DOCX köməkçilər
+def _set_borderless(table):
+    tbl = table._element
+    tblPr = tbl.get_or_add_tblPr()
+    borders = tblPr.find(qn('w:tblBorders'))
+    if borders is None:
+        borders = OxmlElement('w:tblBorders')
+        tblPr.append(borders)
+    def nil(side):
+        e = OxmlElement(side); e.set(qn('w:val'), 'nil'); return e
+    for side in ['w:top','w:left','w:bottom','w:right','w:insideH','w:insideV']:
+        old = borders.find(qn(side))
+        if old is not None: borders.remove(old)
+        borders.append(nil(side))
 
-    if calc:
-        map_df = (pd.DataFrame.from_dict(_CLASS_INFO_BASE, orient="index", columns=["Açıqlama","Güzəşt (AZN)"])
-                    .reset_index().rename(columns={"index":"Təsnifat"}))
-        out = out.merge(map_df[["Təsnifat","Güzəşt (AZN)"]], on="Təsnifat", how="left")
-        out["Güzəşt (AZN)"] = out["Güzəşt (AZN)"].fillna(0).astype(int)
-        out["Cəmi (AZN)"] = out["Say"] * out["Güzəşt (AZN)"]
-        out = out[["Təsnifat","Say","Cəmi (AZN)"]]
-    else:
-        out = out[["Təsnifat","Say"]]
-    return out.reset_index(drop=True)
+def _shade(cell, fill_hex="F2F2F2"):
+    tc = cell._tc
+    pr = tc.get_or_add_tcPr()
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), fill_hex)
+    pr.append(shd)
 
-# ------------------------------- DOCX -----------------------------------
-def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
+def add_table(doc: Document, df: pd.DataFrame, title: str | None = None):
+    if title:
+        p = doc.add_paragraph(title)
+        p.runs[0].bold = True
+        p.runs[0].font.size = Pt(12)
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    r, c = df.shape
+    t = doc.add_table(rows=r+1, cols=c)
+    # header
+    for j, col in enumerate(df.columns):
+        cell = t.cell(0, j)
+        cell.text = str(col)
+        for par in cell.paragraphs:
+            for run in par.runs:
+                run.font.bold = True
+                run.font.size = Pt(10.5)
+        _shade(cell)
+    # body
+    for i in range(r):
+        for j in range(c):
+            t.cell(i+1, j).text = str(df.iat[i, j])
+    _set_borderless(t)
+    doc.add_paragraph("")
+
+# ——— Report qurucu
+def build_report(
+    df: pd.DataFrame,
+    session_state,
+    *,
+    status_cols: list[str] | None = None,
+    include_blanks: bool = False,
+) -> dict:
+    # blank filter (istifadəçi istəyinə görə)
+    df2 = df.copy() if include_blanks else drop_blank_status_rows(df, status_cols)
+
+    # sütunlar
+    col_app = _find_col(df2, ALIASES["applicant"])
+    col_brand = _find_col(df2, ALIASES["brand"])
+    col_model = _find_col(df2, ALIASES["model"])
+    col_color = _find_col(df2, ALIASES["color"])
+
+    # decade bins
+    decade_bins = ensure_decade_bins(df2)
+    decade_tbl = (
+        decade_bins.dropna()
+        .value_counts()
+        .sort_index()
+        .rename_axis("İllər (10 illik)")
+        .reset_index(name="Say")
+    )
+    decade_tbl.insert(0, "Sıra №", range(1, len(decade_tbl) + 1))
+
+    # Top-N-lər: sessiyadan oxu
+    N_app   = int(session_state.get("param_topN_erizeci", 10))
+    N_brand = int(session_state.get("param_topN_marka",   10))
+    N_model = int(session_state.get("param_topN_model",   10))
+    N_color = int(session_state.get("param_topN_reng",    10))
+
+    report = {
+        "generated_at": datetime.now(),
+        "top_counts_meta": {
+            "applicant": N_app, "brand": N_brand, "model": N_model, "color": N_color
+        },
+        "tables": {"decades": decade_tbl},
+    }
+    if col_app:   report["tables"]["top_applicant"] = top_n_table(df2[col_app], N_app, col_app)
+    if col_brand: report["tables"]["top_brand"]     = top_n_table(df2[col_brand], N_brand, col_brand)
+    if col_model: report["tables"]["top_model"]     = top_n_table(df2[col_model], N_model, col_model)
+    if col_color: report["tables"]["top_color"]     = top_n_table(df2[col_color], N_color, col_color)
+    return report
+
+def export_docx(report: dict) -> bytes:
     doc = Document()
-    doc.styles["Normal"].font.name = "Calibri"
-    doc.styles["Normal"].font.size = Pt(11)
+    style = doc.styles["Normal"]
+    style.font.name = "Arial"
+    style.font.size = Pt(10.5)
 
-    doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
-    if source_filename:
-        doc.add_paragraph(f"Mənbə fayl: {source_filename}")
+    h = doc.add_paragraph("ESLİ – Arayış Hesabatı")
+    h.runs[0].bold = True
+    h.runs[0].font.size = Pt(14)
+    doc.add_paragraph(report["generated_at"].strftime("Tarix: %d.%m.%Y"))
 
-    # 1) Utilizatorlar
-    doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları", level=2)
-    util = report.get("utilizator_counts", pd.DataFrame())
-    if isinstance(util, pd.DataFrame) and not util.empty:
-        # CƏM sətri
-        if util.shape[1] >= 2:
-            total = int(util.iloc[:,1].sum())
-            util_out = util.copy()
-            util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
-            util_out.loc[len(util_out)-1, util_out.columns[1]] = total
-        else:
-            util_out = util.copy()
-        _add_table(doc, util_out)
-    else:
-        doc.add_paragraph("Məlumat yoxdur.")
+    # 10 illik intervallar
+    tbl = report["tables"].get("decades")
+    if tbl is not None:
+        add_table(doc, tbl, title="NV yaşları – 10 illik intervallar")
 
-    # 2) Təsnifat
-    doc.add_heading("2) Təsnifatlar üzrə", level=2)
-    calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
-    ready = report.get("tesnifat_table")
-    if isinstance(ready, pd.DataFrame) and not ready.empty:
-        # yalnız lazımi sütunlar
-        pref = ["Təsnifat","Kod","Say"] + (["Cəmi (AZN)"] if calc else [])
-        t = _subset(ready, pref)
-        if "Kod" in t.columns and "Təsnifat" not in t.columns:
-            t = t.rename(columns={"Kod":"Təsnifat"})
-        _add_table(doc, t)
-        if "Say" in t.columns:
-            p = doc.add_paragraph(); p.add_run(f"Cəm say: {_fmt_int(int(t['Say'].sum()))}").bold = True
-        if calc and "Cəmi (AZN)" in t.columns:
-            p = doc.add_paragraph(); p.add_run(f"Ümumi məbləğ (AZN): {_fmt_int(int(t['Cəmi (AZN)'].sum()))}").bold = True
-    else:
-        base = report.get("tesnifat_counts", pd.DataFrame())
-        t = _fallback_tesnifat(base, report.get("tesnifat_settings", {}))
-        _add_table(doc, t)
-        if "Say" in t.columns:
-            p = doc.add_paragraph(); p.add_run(f"Cəm say: {_fmt_int(int(t['Say'].sum()))}").bold = True
-        if "Cəmi (AZN)" in t.columns:
-            p = doc.add_paragraph(); p.add_run(f"Ümumi məbləğ (AZN): {_fmt_int(int(t['Cəmi (AZN)'].sum()))}").bold = True
+    meta = report["top_counts_meta"]
+    if (t := report["tables"].get("top_applicant")) is not None:
+        add_table(doc, t, title=f"Top-Ərizəçi (Top-{meta['applicant']})")
+    if (t := report["tables"].get("top_brand")) is not None:
+        add_table(doc, t, title=f"Marka Top-{meta['brand']}")
+    if (t := report["tables"].get("top_model")) is not None:
+        add_table(doc, t, title=f"Modellər Top-{meta['model']}")
+    if (t := report["tables"].get("top_color")) is not None:
+        add_table(doc, t, title=f"Rəng Top-{meta['color']}")
 
-    # 3+) Digər bölmələr – dinamik başlıqlar
-    meta = report.get("top_counts_meta", {})
-    sections = [
-        ("3) Təsdiqedici Statusları", "tesdiq_status_totals", ["Təsdiq edici sənədin statusu","Say"]),
-        ("4) TT aktların Statusları", "tehvil_status_totals", ["Təhvil-təslim sənədinin statusu","Say"]),
-        (f"5) Top {meta.get('erizeci_N', 50)} Ərizəçi", "top_erizeci", ["Ərizəçinin tam adı","Say"]),
-        (f"6) Marka Top {meta.get('marka_N', 20)}", "top_marka", ["Marka","Say"]),
-        (f"7) Modellər üzrə Top {meta.get('model_N', 10)}", "top_model", ["Marka","Model","Say"]),
-        (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng", ["Rəng","Say"]),
-        ("9) NV yaşları 10illik intervallarda", "year_bins", ["Buraxılış ili","Say"]),
-    ]
-    for title, key, pref in sections:
-        doc.add_heading(title, level=2)
-        d = report.get(key, pd.DataFrame())
-        if isinstance(d, pd.DataFrame) and not d.empty:
-            _add_table(doc, _subset(d, pref))
-        else:
-            doc.add_paragraph("Məlumat yoxdur.")
-
-    bio = BytesIO(); doc.save(bio)
-    return bio.getvalue()
-
-# ------------------------------- XLSX -----------------------------------
-def export_xlsx(report: Dict[str, Any]) -> bytes:
-    bio = BytesIO()
-    with pd.ExcelWriter(bio, engine="xlsxwriter") as xw:
-        for key, val in report.items():
-            if isinstance(val, pd.DataFrame) and not val.empty:
-                val.to_excel(xw, sheet_name=key[:31], index=False)
-
-        # Utilizator cədvəlində CƏM sətri ilə ayrıca vərəq (oxunaqlıdır)
-        util = report.get("utilizator_counts")
-        if isinstance(util, pd.DataFrame) and not util.empty and util.shape[1] >= 2:
-            util2 = util.copy()
-            util2.loc[len(util2), util2.columns[0]] = "CƏM"
-            util2.loc[len(util2)-1, util2.columns[1]] = int(util.iloc[:,1].sum())
-            util2.to_excel(xw, sheet_name="utilizator_counts", index=False)
-
-        # Təsnifat: hazır yoxdursa fallback yaz
-        tbl = report.get("tesnifat_table")
-        if not (isinstance(tbl, pd.DataFrame) and not tbl.empty):
-            base = report.get("tesnifat_counts", pd.DataFrame())
-            fall = _fallback_tesnifat(base, report.get("tesnifat_settings", {}))
-            if not fall.empty:
-                fall.to_excel(xw, sheet_name="tesnifatlar", index=False)
-
-    return bio.getvalue()
+    bio = io.BytesIO()
+    doc.save(bio); bio.seek(0)
+    return bio.read()
