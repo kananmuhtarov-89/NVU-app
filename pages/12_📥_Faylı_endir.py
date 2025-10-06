@@ -1,94 +1,105 @@
+# pages/12__Faylı_endir.py
 import os
 import pandas as pd
 import streamlit as st
 
-from nvu.regions import load_region_map
 from nvu.export import export_docx, export_xlsx
 
-# =========================================
-# Data
-# =========================================
-df_clean = st.session_state.get("df_clean")
-if df_clean is None:
+# =========================
+# Data yoxlaması
+# =========================
+df = st.session_state.get("df_clean")
+if df is None:
     st.warning("İlk öncə **1) Yüklə / Təmizlə** səhifəsində Excel yükləyin.")
     st.stop()
-
-region_map = load_region_map(os.path.join(os.path.dirname(__file__), "..", "data", "az_region_codes.json"))
 
 st.title("Export (DOCX/XLSX)")
 source_filename = st.session_state.get("source_filename", "—")
 
-# =========================================
-# Parametrlər (sessiyadan; defaultlar)
-# =========================================
-N_ERIZECI = int(st.session_state.get("param_topN_erizeci", 50))
-N_MARKA   = int(st.session_state.get("param_topN_marka", 20))
-N_MODEL   = int(st.session_state.get("param_topN_model", 10))
-N_RENG    = int(st.session_state.get("param_topN_reng", 10))
+# =========================
+# Parametrlər (sessiyadan)
+# =========================
+TOP_ERIZECI = int(st.session_state.get("param_topN_erizeci", 50))
+TOP_MARKA   = int(st.session_state.get("param_topN_marka", 20))
+TOP_MODEL   = int(st.session_state.get("param_topN_model", 10))
+TOP_RENG    = int(st.session_state.get("param_topN_reng", 10))
 
-# =========================================
-# Yardımçı: top-N hesablama
-# =========================================
-def topn_df(df: pd.DataFrame, cols, out_col="Say", n=10):
-    g = (df.groupby(cols, dropna=False)
-           .size()
-           .reset_index(name=out_col)
-           .sort_values(out_col, ascending=False)
-           .head(n))
+# Təsnifat səhifəsindəki seçimlər
+TES_MERGE_G    = bool(st.session_state.get("tesnifat_merge", True))
+TES_CALC_AM    = bool(st.session_state.get("tesnifat_calc", False))
+TES_TABLE_READY = st.session_state.get("tesnifat_table")  # DataFrame və ya None
+
+# =========================
+# Köməkçi funksiyalar
+# =========================
+def col_exists(c): return c in df.columns
+
+def topn(df_in: pd.DataFrame, cols, out="Say", n=10):
+    if any(c not in df_in.columns for c in cols):
+        return pd.DataFrame(columns=[*cols, out])
+    g = (df_in.groupby(cols, dropna=False)
+                .size().reset_index(name=out)
+                .sort_values(out, ascending=False)
+                .head(int(n)))
     return g
 
-# =========================================
+def value_counts_df(series_name: str):
+    if series_name not in df.columns:
+        return pd.DataFrame(columns=[series_name, "Say"])
+    return (df[series_name].value_counts(dropna=False)
+                         .rename_axis(series_name)
+                         .reset_index(name="Say"))
+
+# =========================
 # Report obyekti
-# =========================================
-# 1) Utilizatorlar üzrə saylar
-utilizator_counts = topn_df(df_clean, ["Utilizatorun adı"], out_col="NV sayı", n=10**9)  # hamısını veririk (sıralı)
+# =========================
+report = {}
 
-# 2) Region, yaş və s. (sənin mövcud məntiqinə uyğun sadə quruluş)
-region_counts = (df_clean.groupby("NV qeydiyyat nömrəsi", dropna=False)
-                        .size().reset_index(name="Say"))  # əgər səndə ayrıca funksiya varsa onu istifadə et
+# 1) Utilizatorlar: NV sayı
+if col_exists("Utilizatorun adı"):
+    util = (df["Utilizatorun adı"].value_counts(dropna=False)
+             .rename_axis("Utilizatorun adı")
+             .reset_index(name="NV sayı"))
+else:
+    util = pd.DataFrame(columns=["Utilizatorun adı","NV sayı"])
+report["utilizator_counts"] = util
 
-# Təsnifat səhifəsindəki seçimlər + hazır cədvəl (əgər formalaşıbsa)
-tesnifat_settings = {
-    "merge_g": st.session_state.get("tesnifat_merge", True),
-    "calc_amounts": st.session_state.get("tesnifat_calc", False),
-}
-tesnifat_table = st.session_state.get("tesnifat_table")  # None ola bilər
+# 2) Təsnifatlar (fallback üçün baza) + səhifədən hazır cədvəl
+report["tesnifat_settings"] = {"merge_g": TES_MERGE_G, "calc_amounts": TES_CALC_AM}
+report["tesnifat_table"] = TES_TABLE_READY  # None ola bilər
+if col_exists("Təsnifat"):
+    report["tesnifat_counts"] = df["Təsnifat"].value_counts(dropna=False).rename_axis("Təsnifat").reset_index(name="Say")
+else:
+    report["tesnifat_counts"] = pd.DataFrame(columns=["Təsnifat","Say"])
 
-report = {
-    # 1) Utilizatorlar
-    "utilizator_counts": utilizator_counts,
+# 3) Status cədvəlləri
+report["tesdiq_status_totals"] = value_counts_df("Təsdiq edici sənədin statusu")
+report["tehvil_status_totals"] = value_counts_df("Təhvil-təslim sənədinin statusu")
 
-    # 2) Təsnifatlar
-    "tesnifat_counts": (df_clean.groupby("Təsnifat", dropna=False)
-                                 .size().reset_index(name="Say")),  # fallback üçün baza
-    "tesnifat_settings": tesnifat_settings,
-    "tesnifat_table": tesnifat_table,
+# 4) Top-N cədvəlləri (Parametrlərə uyğun)
+report["top_erizeci"] = topn(df, ["Ərizəçinin tam adı"], n=TOP_ERIZECI)
+report["top_marka"]   = topn(df, ["Marka"], n=TOP_MARKA)
+report["top_model"]   = topn(df, ["Marka","Model"], n=TOP_MODEL)
+report["top_reng"]    = topn(df, ["Rəng"], n=TOP_RENG)
 
-    # 3) Top-N blokları (dinamik)
-    "top_erizeci": topn_df(df_clean, ["Ərizəçinin tam adı"], n=N_ERIZECI),
-    "top_marka":   topn_df(df_clean, ["Marka"],               n=N_MARKA),
-    "top_model":   topn_df(df_clean, ["Marka","Model"],       n=N_MODEL),
-    "top_reng":    topn_df(df_clean, ["Rəng"],                n=N_RENG),
+# 5) (Opsional) yaş paylanması — varsa
+if col_exists("Buraxılış ili"):
+    y = pd.to_numeric(df["Buraxılış ili"], errors="coerce").dropna().astype(int)
+    report["year_bins"] = y.value_counts().sort_index().rename_axis("Buraxılış ili").reset_index(name="Say")
+else:
+    report["year_bins"] = pd.DataFrame(columns=["Buraxılış ili","Say"])
 
-    # 4) Region/yaş və s. – lazım olduqca əlavə edirsən
-    "region_counts": region_counts,
-    "year_bins": (df_clean.assign(**{"Buraxılış ili":
-                   pd.to_numeric(df_clean["Buraxılış ili"], errors="coerce")})
-                   .dropna(subset=["Buraxılış ili"])
-                   .assign(il=lambda x: x["Buraxılış ili"].astype(int))
-                   .groupby("il").size().reset_index(name="Say")),
-    # Top N dəyərləri başlıqlar üçün
-    "top_counts_meta": {
-        "erizeci_N": N_ERIZECI,
-        "marka_N": N_MARKA,
-        "model_N": N_MODEL,
-        "reng_N": N_RENG,
-    },
+# Top N meta başlıqlar üçün
+report["top_counts_meta"] = {
+    "erizeci_N": TOP_ERIZECI,
+    "marka_N": TOP_MARKA,
+    "model_N": TOP_MODEL,
+    "reng_N": TOP_RENG,
 }
 
-# =========================================
-# UI: Export düymələri
-# =========================================
+# =========================
+# Export Düymələri
+# =========================
 c1, c2 = st.columns(2)
 with c1:
     if st.button("DOCX yarat"):
