@@ -61,7 +61,7 @@ def normalize_g(code: str) -> str:
     return x[:-1] if x.endswith("G") and x[:-1] in _GABLE else x
 
 # İdarələr
-merge_g = st.toggle("**G variantlarını birləşdir** (M1+M1G, N1+N1G, ...)", value=True)
+merge_g = st.toggle("**Təsnifatlar üzrə birləşdir** (M1+M1G, N1+N1G, ...)", value=True)
 calc_amounts = st.toggle("**Məbləğləri hesabla** (Cəmi AZN sütunu)", value=False)
 
 # Kodları çıxar
