@@ -18,9 +18,7 @@ def _fmt_int(x: Optional[int]) -> str:
         return str(x)
 
 def _make_table_borderless(table):
-    """
-    Word cədvəlində sərhədləri (grid) söndürmək üçün stabil metod.
-    """
+    """Word cədvəlində sərhədləri söndür."""
     try:
         tbl = table._tbl
         tblPr = getattr(tbl, "tblPr", None)
@@ -41,8 +39,38 @@ def _shade_cell(cell, fill_hex: str = "D9E1F2"):
         shd = OxmlElement("w:shd")
         shd.set(qn("w:val"), "clear")
         shd.set(qn("w:color"), "auto")
-        shd.set(qn("w:fill"), fill_hex)  # hex like "D9E1F2"
+        shd.set(qn("w:fill"), fill_hex)
         tcPr.append(shd)
+    except Exception:
+        pass
+
+def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
+    """
+    Cədvəldə bütün hüceyrələr üçün eyni margin (twips) – header və data sətrlərində simmetriya üçün.
+    1 pt ≈ 20 twips, 80 twips ≈ 4 pt.
+    """
+    try:
+        tbl = table._tbl
+        tblPr = getattr(tbl, "tblPr", None)
+        if tblPr is None and hasattr(tbl, "get_or_add_tblPr"):
+            tblPr = tbl.get_or_add_tblPr()
+        if tblPr is None:
+            return
+        # <w:tblCellMar>
+        cellMar = tblPr.find(qn("w:tblCellMar"))
+        if cellMar is None:
+            cellMar = OxmlElement("w:tblCellMar")
+            tblPr.append(cellMar)
+
+        def _set(side, val):
+            el = cellMar.find(qn(f"w:{side}"))
+            if el is None:
+                el = OxmlElement(f"w:{side}")
+                cellMar.append(el)
+            el.set(qn("w:w"), str(val))
+            el.set(qn("w:type"), "dxa")
+
+        _set("top", top); _set("bottom", bottom); _set("left", left); _set("right", right)
     except Exception:
         pass
 
@@ -69,10 +97,7 @@ def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
     return dfx
 
 def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
-    """
-    Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil.
-    key_cols – mətni vacib olan sütun(lar).
-    """
+    """Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil."""
     dfx = df.copy()
     mask = pd.Series(True, index=dfx.index)
     for c in key_cols:
@@ -89,6 +114,8 @@ def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> Non
     dfx = _sanitize_df_for_docx(dfx)
 
     table = doc.add_table(rows=1, cols=len(dfx.columns))
+    table.allow_autofit = True
+    _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80)  # simmetrik boşluq
     _make_table_borderless(table)
 
     # Header sətri
@@ -97,6 +124,8 @@ def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> Non
         _shade_cell(hdr[i], "D9E1F2")
         p = hdr[i].paragraphs[0]
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
         run = p.add_run(str(col))
         run.bold = True
         run.font.name = "Arial"
@@ -108,6 +137,8 @@ def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> Non
         for j, col in enumerate(dfx.columns):
             p = cells[j].paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
             run = p.add_run(row[col])
             run.font.name = "Arial"
             run.font.size = Pt(11)
@@ -137,11 +168,14 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     h2.font.size = Pt(14)
     h2.font.color.rgb = RGBColor(0x1F, 0x5A, 0xB6)
 
+    # Başlıq
     doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
-    if source_filename:
-        p = doc.add_paragraph("Mənbə fayl: ")
-        run = p.add_run(source_filename)
-        run.bold = True
+
+    # Mənbə fayl yerinə: Hesabat tarixi (qırmızı)
+    p = doc.add_paragraph("Hesabat tarixi: ")
+    run = p.add_run(pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"))
+    run.bold = True
+    run.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
 
     # 1) Utilizatorlar
     doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları — yekun", level=2)
@@ -164,13 +198,19 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     if isinstance(ready, pd.DataFrame) and not ready.empty:
         pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
         t = _subset(ready, pref)
+        # Əgər 'Kod' yoxdur, 'Təsnifat'ı istifadə et
         if "Kod" not in t.columns and "Təsnifat" in t.columns:
             t = t.rename(columns={"Təsnifat": "Kod"})
+
+        # Çıxışda göstəriləcək sütunlar
         cols = ["Kod", "Say"]
         if calc and "Cəmi (AZN)" in t.columns:
             t["Cəmi (AZN)"] = pd.to_numeric(t["Cəmi (AZN)"], errors="coerce").fillna(0).astype(int)
             cols += ["Cəmi (AZN)"]
-        _add_table(doc, t[cols], add_rownum=False)
+
+        # >>> ƏGƏR "Kod" başlığını "Təsnifat" adı ilə göstərmək istəsən:
+        t_display = t[cols].rename(columns={"Kod": "Təsnifat"})
+        _add_table(doc, t_display, add_rownum=False)
 
         if "Say" in t.columns:
             p = doc.add_paragraph()
@@ -237,7 +277,7 @@ def export_xlsx(report: Dict[str, Any]) -> bytes:
             if isinstance(val, pd.DataFrame) and not val.empty:
                 val.to_excel(xw, sheet_name=key[:31], index=False)
 
-        # Utilizator cədvəlini CƏM sətiri ilə də ayrıca yaz (oxunaqlı olur)
+        # Utilizator cədvəlini CƏM sətiri ilə də ayrıca yaz
         util = report.get("utilizator_counts")
         if isinstance(util, pd.DataFrame) and not util.empty and util.shape[1] >= 2:
             util2 = util.copy()
