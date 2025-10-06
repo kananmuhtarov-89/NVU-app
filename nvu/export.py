@@ -1,3 +1,4 @@
+# nvu/export.py
 import re
 from io import BytesIO
 from typing import Dict, Any, Optional
@@ -7,10 +8,12 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+
 # ------------------------------------------------------------
 # Köməkçilər
 # ------------------------------------------------------------
 def _add_table(doc: Document, df: pd.DataFrame, header_bold: bool = True) -> None:
+    """Pandas DataFrame-i DOCX cədvəli kimi əlavə et."""
     table = doc.add_table(rows=1, cols=len(df.columns))
     table.style = "Table Grid"
     hdr = table.rows[0].cells
@@ -20,15 +23,19 @@ def _add_table(doc: Document, df: pd.DataFrame, header_bold: bool = True) -> Non
         if header_bold:
             run.bold = True
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
     for _, row in df.iterrows():
         cells = table.add_row().cells
         for j, col in enumerate(df.columns):
-            cells[j].text = str(row[col] if pd.notna(row[col]) else "")
+            val = row[col]
+            cells[j].text = "" if pd.isna(val) else str(val)
+
 
 def _fmt_int(x: Optional[int]) -> str:
     if x is None:
         return "—"
     return f"{int(x):,}".replace(",", " ")
+
 
 # ------------------------------------------------------------
 # Təsnifat xəritəsi (fallback üçün)
@@ -48,7 +55,8 @@ _CLASS_INFO_BASE = {
     "HK": ("Meliorasiya/yol-tikinti maşınları, ekskavatorlar", 3000),
     "L":  ("Kvadrisikllər və təkərləri dörddən az olanlar", 200),
 }
-_GABLE = {"M1","M2","M3","N1","N2","N3"}
+_GABLE = {"M1", "M2", "M3", "N1", "N2", "N3"}
+
 
 def _fallback_tesnifat(df_counts: pd.DataFrame, settings: Dict[str, Any]) -> pd.DataFrame:
     """
@@ -80,8 +88,12 @@ def _fallback_tesnifat(df_counts: pd.DataFrame, settings: Dict[str, Any]) -> pd.
     out = df.groupby("Təsnifat", as_index=False)["Say"].sum()
 
     if calc:
-        map_df = pd.DataFrame.from_dict(_CLASS_INFO_BASE, orient="index",
-                                        columns=["Açıqlama", "Güzəşt (AZN)"]).reset_index().rename(columns={"index":"Təsnifat"})
+        map_df = (
+            pd.DataFrame.from_dict(_CLASS_INFO_BASE, orient="index",
+                                   columns=["Açıqlama", "Güzəşt (AZN)"])
+            .reset_index()
+            .rename(columns={"index": "Təsnifat"})
+        )
         out = out.merge(map_df[["Təsnifat", "Güzəşt (AZN)"]], on="Təsnifat", how="left")
         out["Güzəşt (AZN)"] = out["Güzəşt (AZN)"].fillna(0).astype(int)
         out["Cəmi (AZN)"] = out["Say"] * out["Güzəşt (AZN)"]
@@ -91,6 +103,7 @@ def _fallback_tesnifat(df_counts: pd.DataFrame, settings: Dict[str, Any]) -> pd.
 
     return out.sort_values("Say", ascending=False).reset_index(drop=True)
 
+
 # ------------------------------------------------------------
 # DOCX
 # ------------------------------------------------------------
@@ -99,7 +112,7 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     doc.styles["Normal"].font.name = "Calibri"
     doc.styles["Normal"].font.size = Pt(11)
 
-    title = doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
+    doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
     if source_filename:
         doc.add_paragraph(f"Mənbə fayl: {source_filename}")
 
@@ -107,10 +120,10 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları", level=2)
     util = report.get("utilizator_counts", pd.DataFrame())
     if isinstance(util, pd.DataFrame) and not util.empty:
-        total_nv = int(util.iloc[:,1].sum()) if util.shape[1] >= 2 else int(util.sum(numeric_only=True))
+        total_nv = int(util.iloc[:, 1].sum()) if util.shape[1] >= 2 else int(util.sum(numeric_only=True))
         util_out = util.copy()
         util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
-        util_out.loc[len(util_out)-1, util_out.columns[1]] = total_nv
+        util_out.loc[len(util_out) - 1, util_out.columns[1]] = total_nv
         _add_table(doc, util_out)
     else:
         doc.add_paragraph("Məlumat yoxdur.")
@@ -120,18 +133,15 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
     tbl_ready = report.get("tesnifat_table")
     if isinstance(tbl_ready, pd.DataFrame) and not tbl_ready.empty:
-        # yalnız lazımi sütunlar
         cols = ["Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc and "Cəmi (AZN)" in tbl_ready.columns else [])
         tesn_out = tbl_ready[cols].copy()
         _add_table(doc, tesn_out)
-        # cəmlər
         total_cnt = int(tesn_out["Say"].sum())
         p = doc.add_paragraph(); p.add_run(f"Cəm say: {_fmt_int(total_cnt)}").bold = True
         if calc and "Cəmi (AZN)" in tesn_out.columns:
             total_amt = int(tesn_out["Cəmi (AZN)"].sum())
             p = doc.add_paragraph(); p.add_run(f"Ümumi məbləğ (AZN): {_fmt_int(total_amt)}").bold = True
     else:
-        # fallback
         tesn_counts = report.get("tesnifat_counts", pd.DataFrame())
         if isinstance(tesn_counts, pd.DataFrame) and not tesn_counts.empty:
             tesn_out = _fallback_tesnifat(tesn_counts, report.get("tesnifat_settings", {}))
@@ -144,18 +154,19 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         else:
             doc.add_paragraph("Məlumat yoxdur.")
 
-    # 3+) Digər bölmələr
-    order = [
+    # 3) → 10) Digər bölmələr (dinamik başlıqlar)
+    meta = report.get("top_counts_meta", {})
+    sections = [
         ("3) Təsdiqedici Statusları", "tesdiq_status_totals"),
         ("4) TT aktların Statusları", "tehvil_status_totals"),
-        ("5) Top 50 Ərizəçi", "top50_erizeci"),
-        ("6) Marka Top 20", "top20_marka"),
-        ("7) Modellar üzrə Top 20", "top20_model"),
-        ("8) Rəng Top 20", "top20_reng"),
+        (f"5) Top {meta.get('erizeci_N', 50)} Ərizəçi", "top_erizeci"),
+        (f"6) Marka Top {meta.get('marka_N', 20)}", "top_marka"),
+        (f"7) Modellar üzrə Top {meta.get('model_N', 10)}", "top_model"),
+        (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng"),
         ("9) Region", "region_counts"),
         ("10) NV yaşları 10illik intervallarda", "year_bins"),
     ]
-    for heading, key in order:
+    for heading, key in sections:
         doc.add_heading(heading, level=2)
         df = report.get(key, pd.DataFrame())
         if isinstance(df, pd.DataFrame) and not df.empty:
@@ -167,25 +178,26 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     doc.save(bio)
     return bio.getvalue()
 
+
 # ------------------------------------------------------------
 # XLSX
 # ------------------------------------------------------------
 def export_xlsx(report: Dict[str, Any]) -> bytes:
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="xlsxwriter") as xw:
-        # Bütün DataFrame-ləri vərəqlərə yaz
+        # Bütün DataFrame-ləri ayrıca vərəqlərə yaz
         for key, value in report.items():
             if isinstance(value, pd.DataFrame) and not value.empty:
-                sheet = key[:31]
+                sheet = key[:31]  # Excel sheet-name limiti
                 value.to_excel(xw, sheet_name=sheet, index=False)
 
-        # Utilizatorlar üçün CƏM sətiri
+        # Utilizatorlar üçün "CƏM" sətiri ilə ayrıca vərəq (əgər istəyirsənsə saxla)
         util = report.get("utilizator_counts")
         if isinstance(util, pd.DataFrame) and not util.empty:
             sh = "utilizator_counts"
             util_out = util.copy()
             util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
-            util_out.loc[len(util_out)-1, util_out.columns[1]] = int(util.iloc[:,1].sum())
+            util_out.loc[len(util_out) - 1, util_out.columns[1]] = int(util.iloc[:, 1].sum())
             util_out.to_excel(xw, sheet_name=sh, index=False)
 
         # Təsnifatlar: hazır cədvəl yoxdursa fallback
