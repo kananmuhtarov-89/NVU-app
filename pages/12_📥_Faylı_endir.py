@@ -41,6 +41,13 @@ report["top_counts_meta"] = st.session_state.get("top_counts_meta") or {}
 # d) Filtr xülasəsi (tam boş halda mesaj üçün)
 report["summary"] = st.session_state.get("active_filter_summary") or "Seçilmiş filtr üçün uyğun sətir tapılmadı."
 
+# e) tesnifat_settings təhlükəsiz dict olsun (calc_amounts ilə)
+ts = report.get("tesnifat_settings")
+if not isinstance(ts, dict):
+    report["tesnifat_settings"] = {"calc_amounts": bool(st.session_state.get("tesnifat_calc", False))}
+else:
+    ts.setdefault("calc_amounts", bool(st.session_state.get("tesnifat_calc", False)))
+
 # 2) Power BI üçün “tek-sheet feed” qur (sütun adlarını rahat oxunan et)
 cfg = get_settings()
 colmap = (cfg or {}).get("column_map", {}) or {}
