@@ -1,3 +1,4 @@
+# pages/12_📥_Faylı_endir.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -7,30 +8,42 @@ from nvu.settings import get_settings
 
 st.title("Export (DOCX/XLSX)")
 
-# 1) Data yoxlaması
-df = st.session_state.get("df_clean")
-if df is None or df.empty:
-    st.info("İxrac üçün məlumat yoxdur. Əvvəlcə faylı yükləyin və filtr tətbiq edin.")
+# 0) Məlumat varmı?
+df = st.session_state.get("df_clean") or st.session_state.get("df")
+if df is None or len(df) == 0:
+    st.info("İxrac üçün məlumat yoxdur. Əvvəlcə faylı yükləyin və filtrləri tətbiq edin.")
     st.stop()
 
-# 2) Report obyektini yığ
-report = st.session_state.get("report", {}) or {}
+# 1) Report bazası
+report = {}
+
+# a) Utilizator və təsnifat blokları
 for key in [
     "utilizator_counts",
     "tesnifat_table", "tesnifat_counts", "tesnifat_settings",
+]:
+    report[key] = st.session_state.get(key)
+
+# b) Status/Top/İllər
+for key in [
     "tesdiq_status_totals", "tehvil_status_totals",
     "top_erizeci", "top_marka", "top_model", "top_reng",
-    "year_bins", "top_counts_meta",
+    "year_bins",
 ]:
-    report.setdefault(key, st.session_state.get(key))
+    report[key] = st.session_state.get(key)
 
-# Filtr xülasəsi (DOCX-də boş olanda göstərək)
-report["summary"] = st.session_state.get("active_filter_summary")
+# c) Top-N meta (Parametrlər səhifəsindən)
+report["top_counts_meta"] = st.session_state.get("top_counts_meta") or {}
 
-# 3) Power BI üçün “tek-sheet feed”
+# d) Filtr xülasəsi (tam boş halda mesaj üçün)
+report["summary"] = st.session_state.get("active_filter_summary") or "Seçilmiş filtr üçün uyğun sətir tapılmadı."
+
+# 2) Power BI üçün “tek-sheet feed” qur (sütun adlarını rahat oxunan et)
 cfg = get_settings()
 colmap = (cfg or {}).get("column_map", {}) or {}
-feed_cols_candidates = {
+
+# mənbədən götürə biləcəyimiz namizədlər (sənin fayl başlıqlarına uyğun)
+cands = {
     "NV_id":           [colmap.get("NV qeydiyyat nömrəsi"), "NV qeydiyyat nömrəsi", "NV", "NV_id"],
     "Utilizator":      [colmap.get("Utilizator"), "Utilizator", "İcraçı", "İşləyici"],
     "Tesnifat":        [colmap.get("Təsnifat"), "Təsnifat", "Kod/Təsnifat", "Kod"],
@@ -47,35 +60,44 @@ feed_cols_candidates = {
     "il_KOMPOZIT":     ["il_KOMPOZIT", "il_R", "il_AB", "il_AF"],
     "ay_no_KOMPOZIT":  ["ay_no_KOMPOZIT", "ay_no_R", "ay_no_AB", "ay_no_AF"],
 }
+
 feed = pd.DataFrame()
-for out_col, cands in feed_cols_candidates.items():
-    for c in cands:
+for out_col, opts in cands.items():
+    for c in opts:
         if c and c in df.columns:
-            feed[out_col] = df[c]; break
+            feed[out_col] = df[c]
+            break
+
+# tipləri uyğunlaşdır
 for c in ["dt_R", "dt_AB", "dt_AF", "dt_KOMPOZIT"]:
-    if c in feed.columns: feed[c] = pd.to_datetime(feed[c], errors="coerce")
-if "Mebleg_AZN" in feed.columns: feed["Mebleg_AZN"] = pd.to_numeric(feed["Mebleg_AZN"], errors="coerce")
+    if c in feed.columns:
+        feed[c] = pd.to_datetime(feed[c], errors="coerce")
+if "Mebleg_AZN" in feed.columns:
+    feed["Mebleg_AZN"] = pd.to_numeric(feed["Mebleg_AZN"], errors="coerce")
+
 report["powerbi_feed"] = feed
 
-# 4) Export düymələri
+# 3) UI — Export düymələri
 c1, c2 = st.columns(2)
+
 with c1:
-    if st.button("DOCX yarat"):
+    if st.button("DOCX yarat", type="primary"):
         bio = export_docx(report, source_filename=st.session_state.get("source_filename", ""))
         st.download_button(
-            "DOCX yüklə",
+            label="DOCX yüklə",
             data=bio,
             file_name=f"Arayis_—_{datetime.now():%Y%m%d_%H%M%S}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
+
 with c2:
     if st.button("XLSX yarat"):
         bio = export_xlsx(report)
         st.download_button(
-            "XLSX yüklə",
+            label="XLSX yüklə",
             data=bio,
             file_name=f"Arayis_—_{datetime.now():%Y%m%d_%H%M%S}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-st.caption("XLSX faylında 'PowerBI_Feed' adlı vərəq yaradılır. Power BI → Get Data → Excel ilə bu vərəqi seçmək kifayətdir.")
+st.caption("Qeyd: XLSX faylında 'PowerBI_Feed' adlı vərəq var — Power BI → Get Data → Excel ilə həmin vərəqi seçmək kifayətdir.")
