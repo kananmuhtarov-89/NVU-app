@@ -1,52 +1,40 @@
-import streamlit as st, pandas as pd
-from nvu.settings import get_settings, set_settings, CANON_COLS, upload_settings, download_settings_button
+# pages/13_Parametrlər.py
+import streamlit as st
+from nvu.settings import get_settings, set_settings, download_settings_button, upload_settings
 
 st.title("Parametrlər")
 
+# 1) Konfiqurasiyanı yüklə
 cfg = get_settings()
 
-st.subheader("1) Sütun xəritəsi")
-st.caption("Soldakı (kanonik) → sağdakı (sənin fayldakı konkret başlıq). Xəritəni yadda saxla və export et.")
-colmap = cfg.get("column_map",{}).copy()
-for canon in CANON_COLS:
-    colmap[canon] = st.text_input(canon, value=colmap.get(canon, ""), key=f"colmap_{canon}")
-cfg["column_map"] = colmap
-
+# 2) Top-N dəyərləri (UI)
 st.subheader("2) Top-N dəyərləri")
-c1,c2,c3,c4 = st.columns(4)
-cfg["topN"]["applicant"] = c1.number_input("Top-N Ərizəçi", 10, 100, cfg["topN"]["applicant"], 5)
-cfg["topN"]["brand"]     = c2.number_input("Top-N Marka", 10, 100, cfg["topN"]["brand"], 5)
-cfg["topN"]["model"]     = c3.number_input("Top-N Model", 10, 100, cfg["topN"]["model"], 5)
-cfg["topN"]["color"]     = c4.number_input("Top-N Rəng", 10, 100, cfg["topN"]["color"], 5)
+c1, c2, c3, c4 = st.columns(4)
+cfg["topN"]["applicant"] = c1.number_input("Top-N Ərizəçi", min_value=1, max_value=200, value=cfg["topN"]["applicant"], step=1)
+cfg["topN"]["brand"]     = c2.number_input("Top-N Marka",    min_value=1, max_value=200, value=cfg["topN"]["brand"],     step=1)
+cfg["topN"]["model"]     = c3.number_input("Top-N Model",    min_value=1, max_value=200, value=cfg["topN"]["model"],     step=1)
+cfg["topN"]["color"]     = c4.number_input("Top-N Rəng",     min_value=1, max_value=200, value=cfg["topN"]["color"],     step=1)
 
-# Top-N dəyərlərini sessiyaya da yaz
+# 3) Top-N dəyərlərini sessiyaya da yaz (export üçün dinamik başlıq)
 st.session_state["top_counts_meta"] = {
-    "erizeci_N": cfg["topN"]["applicant"],
-    "marka_N":   cfg["topN"]["brand"],
-    "model_N":   cfg["topN"]["model"],
-    "reng_N":    cfg["topN"]["color"],
+    "erizeci_N": int(cfg["topN"]["applicant"]),
+    "marka_N":   int(cfg["topN"]["brand"]),
+    "model_N":   int(cfg["topN"]["model"]),
+    "reng_N":    int(cfg["topN"]["color"]),
 }
 
-st.subheader("3) Dedup qaydaları")
-keys = cfg.get("dedup_keys", [])
-opts = ["Təhvil aktının seriya nömrəsi","Təsdiqedici sənədin seriyası","NV qeydiyyat nömrəsi"]
-sel = st.multiselect("Təkrarı silmək üçün istifadə ediləcək açarlar", options=opts, default=keys)
-cfg["dedup_keys"] = sel
+st.info("Top-N dəyərləri yadda saxlanıldı və sessiyaya yazıldı: "
+        f"Ərizəçi={cfg['topN']['applicant']}, Marka={cfg['topN']['brand']}, "
+        f"Model={cfg['topN']['model']}, Rəng={cfg['topN']['color']}")
 
-st.subheader("4) Status sözlükləri")
-with st.expander("Təsdiq edici sənədin statusu — sinonimlər"):
-    d = cfg["status_dict"]["tesdiq"]
-    for canon, alts in d.items():
-        cfg["status_dict"]["tesdiq"][canon] = st.text_area(canon, value=", ".join(alts)).split(",")
-with st.expander("Təhvil-təslim sənədinin statusu — sinonimlər"):
-    d2 = cfg["status_dict"]["tehvil"]
-    for canon, alts in d2.items():
-        cfg["status_dict"]["tehvil"][canon] = st.text_area(canon, value=", ".join(alts)).split(",")
-
+# 4) Parametrləri yadda saxla / yüklə (opsional)
 st.divider()
-if st.button("Parametrləri yadda saxla (sessiya daxilində)"):
-    set_settings(cfg); st.success("Parametrlər yadda saxlandı (sessiya).")
+if st.button("Parametrləri yadda saxla"):
+    set_settings(cfg)
+    st.success("Parametrlər yadda saxlandı.")
 
-c5,c6 = st.columns(2)
-with c5: download_settings_button()
-with c6: upload_settings()
+c5, c6 = st.columns(2)
+with c5:
+    download_settings_button()
+with c6:
+    upload_settings()
