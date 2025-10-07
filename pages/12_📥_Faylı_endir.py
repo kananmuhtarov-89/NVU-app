@@ -8,9 +8,12 @@ from nvu.settings import get_settings
 
 st.title("Export (DOCX/XLSX)")
 
-# 0) Məlumat varmı?
-df = st.session_state.get("df_clean") or st.session_state.get("df")
-if df is None or len(df) == 0:
+# 0) Məlumat varmı?  (DataFrame-lərdə 'or' istifadə ETMƏ!)
+df = st.session_state.get("df_clean")
+if not isinstance(df, pd.DataFrame) or df.empty:
+    df = st.session_state.get("df")
+
+if not isinstance(df, pd.DataFrame) or df.empty:
     st.info("İxrac üçün məlumat yoxdur. Əvvəlcə faylı yükləyin və filtrləri tətbiq edin.")
     st.stop()
 
@@ -42,7 +45,6 @@ report["summary"] = st.session_state.get("active_filter_summary") or "Seçilmiş
 cfg = get_settings()
 colmap = (cfg or {}).get("column_map", {}) or {}
 
-# mənbədən götürə biləcəyimiz namizədlər (sənin fayl başlıqlarına uyğun)
 cands = {
     "NV_id":           [colmap.get("NV qeydiyyat nömrəsi"), "NV qeydiyyat nömrəsi", "NV", "NV_id"],
     "Utilizator":      [colmap.get("Utilizator"), "Utilizator", "İcraçı", "İşləyici"],
