@@ -92,28 +92,54 @@ def _subset(df: pd.DataFrame, preferred_cols) -> pd.DataFrame:
 
 # -------------------- DOCX --------------------
 def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
-    doc = Document()
-    base = doc.styles["Normal"]; base.font.name = "Arial"; base.font.size = Pt(12)
-    h1 = doc.styles["Heading 1"]; h1.font.name = "Arial"; h1.font.size = Pt(18); h1.font.color.rgb = RGBColor(0x12,0x3A,0x7A)
-    h2 = doc.styles["Heading 2"]; h2.font.name = "Arial"; h2.font.size = Pt(14); h2.font.color.rgb = RGBColor(0x1F,0x5A,0xB6)
+    from io import BytesIO
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+    # ---- GUARD: report hər zaman dict olsun ----
+    if not isinstance(report, dict):
+        # Bəzən səhvən birbaşa DataFrame ötürülə bilir
+        if isinstance(report, pd.DataFrame):
+            report = {"tesnifat_table": report}
+        else:
+            report = {}
+
+    # calc_amounts dəyərini təhlükəsiz oxu
+    ts = report.get("tesnifat_settings")
+    if not isinstance(ts, dict):
+        ts = {}
+    calc = bool(ts.get("calc_amounts", False))
+
+    doc = Document()
+
+    # Ümumi stil – Arial 12
+    base = doc.styles["Normal"]
+    base.font.name = "Arial"
+    base.font.size = Pt(12)
+
+    # Heading 1 – Arial 18, tünd mavi
+    h1 = doc.styles["Heading 1"]
+    h1.font.name = "Arial"
+    h1.font.size = Pt(18)
+    h1.font.color.rgb = RGBColor(0x12, 0x3A, 0x7A)
+
+    # Heading 2 – Arial 14, mavi
+    h2 = doc.styles["Heading 2"]
+    h2.font.name = "Arial"
+    h2.font.size = Pt(14)
+    h2.font.color.rgb = RGBColor(0x1F, 0x5A, 0xB6)
+
+    # Başlıq
     doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
-    p = doc.add_paragraph(); r1 = p.add_run("Hesabat tarixi: "); r1.bold = True; r1.font.color.rgb = RGBColor(0xFF,0x00,0x00)
+
+    # Hesabat tarixi (qırmızı)
+    p = doc.add_paragraph()
+    r1 = p.add_run("Hesabat tarixi: ")
+    r1.bold = True
+    r1.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
     p.add_run(pd.Timestamp.now().strftime(" %Y-%m-%d %H:%M"))
 
-    # 1) Utilizatorlar
-    doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları — yekun", level=2)
-    util = report.get("utilizator_counts", pd.DataFrame())
-    if isinstance(util, pd.DataFrame) and not util.empty:
-        util_out = util.copy()
-        if util_out.shape[1] >= 2:
-            util_out.iloc[:, 1] = pd.to_numeric(util_out.iloc[:, 1], errors="coerce").fillna(0).astype(int)
-            total = int(util_out.iloc[:, 1].sum())
-            util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
-            util_out.loc[len(util_out) - 1, util_out.columns[1]] = total
-        _add_table(doc, util_out, add_rownum=False)
-    else:
-        doc.add_paragraph("Məlumat yoxdur.")
 
     # 2) Təsnifat
     doc.add_heading("2) Təsnifatlar üzrə — yekun", level=2)
