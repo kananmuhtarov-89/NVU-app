@@ -19,6 +19,14 @@ cfg["topN"]["brand"]     = c2.number_input("Top-N Marka", 10, 100, cfg["topN"]["
 cfg["topN"]["model"]     = c3.number_input("Top-N Model", 10, 100, cfg["topN"]["model"], 5)
 cfg["topN"]["color"]     = c4.number_input("Top-N Rəng", 10, 100, cfg["topN"]["color"], 5)
 
+# Top-N dəyərlərini sessiyaya da yaz
+st.session_state["top_counts_meta"] = {
+    "erizeci_N": cfg["topN"]["applicant"],
+    "marka_N":   cfg["topN"]["brand"],
+    "model_N":   cfg["topN"]["model"],
+    "reng_N":    cfg["topN"]["color"],
+}
+
 st.subheader("3) Dedup qaydaları")
 keys = cfg.get("dedup_keys", [])
 opts = ["Təhvil aktının seriya nömrəsi","Təsdiqedici sənədin seriyası","NV qeydiyyat nömrəsi"]
