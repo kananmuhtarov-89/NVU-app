@@ -15,6 +15,13 @@ cfg["topN"]["brand"]     = c2.number_input("Top-N Marka",    min_value=1, max_va
 cfg["topN"]["model"]     = c3.number_input("Top-N Model",    min_value=1, max_value=200, value=cfg["topN"]["model"],     step=1)
 cfg["topN"]["color"]     = c4.number_input("Top-N Rəng",     min_value=1, max_value=200, value=cfg["topN"]["color"],     step=1)
 
+# --- Sync Top-N to session_state for Export/Other pages (minimal patch) ---
+st.session_state["param_topN_erizeci"] = int(cfg["topN"]["applicant"])
+st.session_state["param_topN_marka"]   = int(cfg["topN"]["brand"])
+st.session_state["param_topN_model"]   = int(cfg["topN"]["model"])
+st.session_state["param_topN_reng"]    = int(cfg["topN"]["color"])
+
+
 # 3) Top-N dəyərlərini sessiyaya da yaz (export üçün dinamik başlıq)
 st.session_state["top_counts_meta"] = {
     "erizeci_N": int(cfg["topN"]["applicant"]),
