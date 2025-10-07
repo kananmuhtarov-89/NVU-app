@@ -20,7 +20,7 @@ def _fmt_int(x: Optional[int]) -> str:
 
 
 def _make_table_borderless(table):
-    """Word cədvəlində sərhədləri söndür."""
+    \"\"\"Word cədvəlində sərhədləri söndür.\"\"\"
     try:
         tbl = table._tbl
         tblPr = getattr(tbl, "tblPr", None)
@@ -36,7 +36,7 @@ def _make_table_borderless(table):
 
 
 def _shade_cell(cell, fill_hex: str = "D9E1F2"):
-    """Cədvəl hüceyrəsinə fon rəngi ver (header üçün)."""
+    \"\"\"Cədvəl hüceyrəsinə fon rəngi ver (header üçün).\"\"\"
     try:
         tcPr = cell._tc.get_or_add_tcPr()
         shd = OxmlElement("w:shd")
@@ -49,10 +49,10 @@ def _shade_cell(cell, fill_hex: str = "D9E1F2"):
 
 
 def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
-    """
+    \"\"\"
     Cədvəldə bütün hüceyrələr üçün eyni margin (twips) – header və data sətrlərində simmetriya üçün.
     1 pt ≈ 20 twips, 80 twips ≈ 4 pt.
-    """
+    \"\"\"
     try:
         tbl = table._tbl
         tblPr = getattr(tbl, "tblPr", None)
@@ -79,7 +79,7 @@ def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
 
 
 def _to_text(val) -> str:
-    """NaN/boş/“nan” dəyərləri '—' kimi yaz, ədəd varsa '.0' at."""
+    \"\"\"NaN/boş/“nan” dəyərləri '—' kimi yaz, ədəd varsa '.0' at.\"\"\"
     if pd.isna(val):
         return "—"
     s = str(val).strip()
@@ -103,7 +103,7 @@ def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
-    """Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil."""
+    \"\"\"Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil.\"\"\"
     dfx = df.copy()
     mask = pd.Series(True, index=dfx.index)
     for c in key_cols:
@@ -204,10 +204,22 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     # 2) Təsnifat
     doc.add_heading("2) Təsnifatlar üzrə — yekun", level=2)
     calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
+
+    # --- PATCH: məbləğ sütunu avtomatik aşkar & ad elastikliyi ---
+    amount_candidates = ["Cəmi (AZN)", "Məbləğ (AZN)", "Mebleg (AZN)", "Cemi (AZN)"]
     ready = report.get("tesnifat_table")
+    has_amounts = isinstance(ready, pd.DataFrame) and any(c in ready.columns for c in amount_candidates)
+    calc = bool(calc or has_amounts)
+    # --- PATCH END ---
+
     if isinstance(ready, pd.DataFrame) and not ready.empty:
-        pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
-        t = _subset(ready, pref)
+        # --- PATCH: amount sütunlarını da seç + standart adlandır ---
+        t = _subset(ready, ["Kod", "Təsnifat", "Say"] + amount_candidates)
+        for ac in amount_candidates:
+            if ac in t.columns:
+                t.rename(columns={ac: "Cəmi (AZN)"}, inplace=True)
+                break
+        # --- PATCH END ---
 
         # Çıxışda göstəriləcək sütunları hazırla
         cols = []
@@ -298,12 +310,12 @@ except Exception:
 
 
 def _style_openpyxl_worksheet(ws, df: pd.DataFrame):
-    """
+    \"\"\"
     Power BI üçün oxunaqlı olmaq naminə:
     - Header-ları bold + açıq mavi fon
     - Sütunları kontent uzunluğuna görə genişləndir
     Bu funksiya yalnız openpyxl mühərrikində işləyir.
-    """
+    \"\"\"
     if ws is None or Font is None:
         return
     # Header stilləri
@@ -324,12 +336,12 @@ def _style_openpyxl_worksheet(ws, df: pd.DataFrame):
 
 
 def export_xlsx(report: dict) -> bytes:
-    """
+    \"\"\"
     Mövcud məntiqin eynisi saxlanılır:
     - report-dakı DataFrame-lər ayrı-ayrı vərəqlərə yazılır.
     - xlsxwriter tələb etmədən openpyxl ilə yazırıq.
     - Əlavə olaraq hər vərəqin header-ları bold + açıq mavi olur və sütunlar autosize edilir.
-    """
+    \"\"\"
     bio = BytesIO()
 
     # Pandas writer: openpyxl
