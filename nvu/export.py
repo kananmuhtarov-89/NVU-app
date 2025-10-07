@@ -1,235 +1,315 @@
 # nvu/export.py
 from io import BytesIO
-from datetime import datetime
+from typing import Dict, Any, Optional
 import pandas as pd
-import numpy as np
-
-# ============== DOCX ==============
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-H1_COLOR = RGBColor(31, 78, 121)     # tünd mavi
-H2_COLOR = RGBColor(0, 112, 192)     # mavi
-FONT_NAME = "Arial"
 
-def _set_doc_defaults(doc: Document):
-    style = doc.styles["Normal"]
-    style.font.name = FONT_NAME
-    style.font.size = Pt(10)
+# -------------------- Köməkçilər --------------------
+def _fmt_int(x: Optional[int]) -> str:
+    if x is None:
+        return "—"
+    try:
+        return f"{int(x):,}".replace(",", " ")
+    except Exception:
+        return str(x)
 
-def _set_header_footer(doc: Document):
-    sect = doc.sections[0]
+
+def _make_table_borderless(table):
+    """Word cədvəlində sərhədləri söndür."""
+    try:
+        tbl = table._tbl
+        tblPr = getattr(tbl, "tblPr", None)
+        if tblPr is None and hasattr(tbl, "get_or_add_tblPr"):
+            tblPr = tbl.get_or_add_tblPr()
+        if tblPr is None:
+            return
+        NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        for el in tblPr.xpath("./w:tblBorders", namespaces=NS):
+            tblPr.remove(el)
+    except Exception:
+        pass
+
+
+def _shade_cell(cell, fill_hex: str = "D9E1F2"):
+    """Cədvəl hüceyrəsinə fon rəngi ver (header üçün)."""
+    try:
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), fill_hex)
+        tcPr.append(shd)
+    except Exception:
+        pass
+
+
+def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
+    """
+    Cədvəldə bütün hüceyrələr üçün eyni margin (twips) – header və data sətrlərində simmetriya üçün.
+    1 pt ≈ 20 twips, 80 twips ≈ 4 pt.
+    """
+    try:
+        tbl = table._tbl
+        tblPr = getattr(tbl, "tblPr", None)
+        if tblPr is None and hasattr(tbl, "get_or_add_tblPr"):
+            tblPr = tbl.get_or_add_tblPr()
+        if tblPr is None:
+            return
+        cellMar = tblPr.find(qn("w:tblCellMar"))
+        if cellMar is None:
+            cellMar = OxmlElement("w:tblCellMar")
+            tblPr.append(cellMar)
+
+        def _set(side, val):
+            el = cellMar.find(qn(f"w:{side}"))
+            if el is None:
+                el = OxmlElement(f"w:{side}")
+                cellMar.append(el)
+            el.set(qn("w:w"), str(val))
+            el.set(qn("w:type"), "dxa")
+
+        _set("top", top); _set("bottom", bottom); _set("left", left); _set("right", right)
+    except Exception:
+        pass
+
+
+def _to_text(val) -> str:
+    """NaN/boş/“nan” dəyərləri '—' kimi yaz, ədəd varsa '.0' at."""
+    if pd.isna(val):
+        return "—"
+    s = str(val).strip()
+    if s.lower() in ("nan", "none", ""):
+        return "—"
+    try:
+        if isinstance(val, float) and float(val).is_integer():
+            return _fmt_int(int(val))
+        if isinstance(val, int):
+            return _fmt_int(val)
+    except Exception:
+        pass
+    return s
+
+
+def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
+    dfx = df.copy()
+    for c in dfx.columns:
+        dfx[c] = dfx[c].map(_to_text)
+    return dfx
+
+
+def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
+    """Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil."""
+    dfx = df.copy()
+    mask = pd.Series(True, index=dfx.index)
+    for c in key_cols:
+        if c in dfx.columns:
+            s = dfx[c].astype(str).str.strip()
+            bad = s.isna() | (s == "") | s.str.lower().isin(["nan", "none", "—"])
+            mask &= ~bad
+    return dfx[mask].copy()
+
+
+def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> None:
+    dfx = df.copy()
+    if add_rownum and len(dfx) > 0:
+        dfx.insert(0, "Sıra №", range(1, len(dfx) + 1))
+    dfx = _sanitize_df_for_docx(dfx)
+
+    table = doc.add_table(rows=1, cols=len(dfx.columns))
+    table.allow_autofit = True
+    _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80)
+    _make_table_borderless(table)
+
     # Header
-    hp = sect.header.paragraphs[0] if sect.header.paragraphs else sect.header.add_paragraph()
-    hp.text = "NVU — Utilizasiya Proqramı üzrə Yekun Hesabat"
-    hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for r in hp.runs:
-        r.font.bold = True
-        r.font.name = FONT_NAME
-        r.font.size = Pt(11)
-        r.font.color.rgb = H1_COLOR
-    # Footer (yalnız tarix)
-    fp = sect.footer.paragraphs[0] if sect.footer.paragraphs else sect.footer.add_paragraph()
-    fp.text = f"Təmiz Şəhər ASC — NV Utilizasiya şöbəsi · Tarix: {datetime.now():%Y-%m-%d}"
-    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for r in fp.runs:
-        r.font.name = FONT_NAME
-        r.font.size = Pt(9)
+    hdr = table.rows[0].cells
+    for i, col in enumerate(dfx.columns):
+        _shade_cell(hdr[i], "D9E1F2")
+        p = hdr[i].paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        run = p.add_run(str(col))
+        run.bold = True
+        run.font.name = "Arial"
+        run.font.size = Pt(11)
 
-def _add_heading(doc: Document, text: str, level: int = 1):
-    p = doc.add_paragraph()
-    rn = p.add_run(text)
-    rn.font.name = FONT_NAME
-    rn.bold = True
-    if level == 1:
-        rn.font.size = Pt(16); rn.font.color.rgb = H1_COLOR; p.space_after = Pt(6)
-    else:
-        rn.font.size = Pt(13); rn.font.color.rgb = H2_COLOR; p.space_after = Pt(4)
+    # Rows
+    for _, row in dfx.iterrows():
+        cells = table.add_row().cells
+        for j, col in enumerate(dfx.columns):
+            p = cells[j].paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            run = p.add_run(row[col])
+            run.font.name = "Arial"
+            run.font.size = Pt(11)
 
-def _add_note_date(doc: Document):
+
+def _subset(df: pd.DataFrame, preferred_cols) -> pd.DataFrame:
+    cols = [c for c in preferred_cols if c in df.columns]
+    return df[cols].copy() if cols else df.copy()
+
+
+# -------------------- DOCX --------------------
+def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
+    doc = Document()
+
+    # Ümumi stil – Arial 12
+    base = doc.styles["Normal"]
+    base.font.name = "Arial"
+    base.font.size = Pt(12)
+
+    # Heading 1 – Arial 18, tünd mavi
+    h1 = doc.styles["Heading 1"]
+    h1.font.name = "Arial"
+    h1.font.size = Pt(18)
+    h1.font.color.rgb = RGBColor(0x12, 0x3A, 0x7A)
+
+    # Heading 2 – Arial 14, mavi
+    h2 = doc.styles["Heading 2"]
+    h2.font.name = "Arial"
+    h2.font.size = Pt(14)
+    h2.font.color.rgb = RGBColor(0x1F, 0x5A, 0xB6)
+
+    # Başlıq
+    doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
+
+    # Mənbə fayl əvəzinə hesabat tarixi (qırmızı)
     p = doc.add_paragraph()
     r1 = p.add_run("Hesabat tarixi: ")
-    r1.font.name = FONT_NAME; r1.font.size = Pt(10); r1.bold = True
-    r2 = p.add_run(datetime.now().strftime("%Y-%m-%d"))
-    r2.font.name = FONT_NAME; r2.font.size = Pt(10); r2.font.color.rgb = RGBColor(192, 0, 0)
+    r1.bold = True
+    r1.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    p.add_run(pd.Timestamp.now().strftime(" %Y-%m-%d %H:%M"))
 
-def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None:
-        return pd.DataFrame()
-    out = df.copy()
-    out = out.replace({r"^\s*—\s*$": np.nan}, regex=True)
-    out = out.dropna(how="all")
-    return out
+    # 1) Utilizatorlar
+    doc.add_heading("1) Utilizatorlar üzrə qəbul edilən NV sayları — yekun", level=2)
+    util = report.get("utilizator_counts", pd.DataFrame())
+    if isinstance(util, pd.DataFrame) and not util.empty:
+        util_out = util.copy()
+        if util_out.shape[1] >= 2:
+            util_out.iloc[:, 1] = pd.to_numeric(util_out.iloc[:, 1], errors="coerce").fillna(0).astype(int)
+            total = int(util_out.iloc[:, 1].sum())
+            util_out.loc[len(util_out), util_out.columns[0]] = "CƏM"
+            util_out.loc[len(util_out) - 1, util_out.columns[1]] = total
+        _add_table(doc, util_out, add_rownum=False)
+    else:
+        doc.add_paragraph("Məlumat yoxdur.")
 
-def _table_with_light_borders(table):
-    """Nazik, açıq-boz sərhədlər — ekranda daha aydın görünür."""
-    tbl = table._element
-    tblPr = tbl.tblPr
-    if tblPr is None:
-        tblPr = OxmlElement('w:tblPr')
-        if len(tbl): tbl.insert(0, tblPr)
-        else: tbl.append(tblPr)
-    borders = OxmlElement('w:tblBorders')
-    for edge in ('top','left','bottom','right','insideH','insideV'):
-        e = OxmlElement(f'w:{edge}')
-        e.set(qn('w:val'), 'single'); e.set(qn('w:sz'), '4'); e.set(qn('w:color'), 'D9D9D9')
-        borders.append(e)
-    tblPr.append(borders)
+    # 2) Təsnifat
+    doc.add_heading("2) Təsnifatlar üzrə — yekun", level=2)
+    calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
+    ready = report.get("tesnifat_table")
+    if isinstance(ready, pd.DataFrame) and not ready.empty:
+        pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
+        t = _subset(ready, pref)
 
-def _add_df_table(doc: Document, df: pd.DataFrame):
-    df = _clean_df(df)
-    if df.empty: return
-    # 1-ci sütunu vahidləşdir
-    if df.columns.size >= 1:
-        c0 = str(df.columns[0]).strip().lower()
-        if c0 in ["kod","kod/təsnifat","kod / təsnifat","tesnifat","kod tesnifat"]:
-            df = df.rename(columns={df.columns[0]: "Təsnifat"})
-    rows, cols = len(df.index), len(df.columns)
-    if rows == 0 or cols == 0: return
+        # Çıxışda göstəriləcək sütunları hazırla
+        cols = []
+        if "Kod" in t.columns:
+            cols.append("Kod")
+        elif "Təsnifat" in t.columns:
+            cols.append("Təsnifat")
+        if "Say" in t.columns:
+            cols.append("Say")
+        if calc and "Cəmi (AZN)" in t.columns:
+            t["Cəmi (AZN)"] = pd.to_numeric(t["Cəmi (AZN)"], errors="coerce").fillna(0).astype(int)
+            cols.append("Cəmi (AZN)")
 
-    table = doc.add_table(rows=rows+1, cols=cols)
-    table.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    table.allow_autofit = True
-    _table_with_light_borders(table)
+        t_display = t[cols].copy()
+        # 1-ci sütunu mütləq “Təsnifat” adı ilə göstər
+        if len(t_display.columns) > 0:
+            first_col = t_display.columns[0]
+            t_display.rename(columns={first_col: "Təsnifat"}, inplace=True)
 
-    # Header
-    for j, col in enumerate(df.columns):
-        cell = table.cell(0, j); cell.text = str(col)
-        for r in cell.paragraphs[0].runs:
-            r.font.bold = True; r.font.name = FONT_NAME; r.font.size = Pt(10)
-    # Rows
-    for i, (_, row) in enumerate(df.iterrows(), start=1):
-        for j, col in enumerate(df.columns):
-            v = row[col]; cell = table.cell(i, j)
-            cell.text = "" if pd.isna(v) else str(v)
-            for r in cell.paragraphs[0].runs:
-                r.font.name = FONT_NAME; r.font.size = Pt(10)
-    doc.add_paragraph()
+        _add_table(doc, t_display, add_rownum=False)
 
-def export_docx(report: dict, source_filename: str = "") -> bytes:
-    """DOCX — Top-N başlıqları dinamik, boş cədvəllər atlanır."""
-    doc = Document()
-    _set_doc_defaults(doc); _set_header_footer(doc)
-    _add_heading(doc, "Yekun Hesabat", level=1); _add_note_date(doc)
+        if "Say" in t.columns:
+            p = doc.add_paragraph()
+            p.add_run(f"Cəm say: {_fmt_int(int(pd.to_numeric(t['Say'], errors='coerce').fillna(0).sum()))}").bold = True
+        if calc and "Cəmi (AZN)" in t.columns:
+            p = doc.add_paragraph()
+            p.add_run(
+                f"Ümumi məbləğ (AZN): {_fmt_int(int(pd.to_numeric(t['Cəmi (AZN)'], errors='coerce').fillna(0).sum()))}"
+            ).bold = True
+    else:
+        base = report.get("tesnifat_counts", pd.DataFrame())
+        t = _subset(base, ["Təsnifat", "Say"])
+        _add_table(doc, t, add_rownum=False)
 
-    meta = report.get("top_counts_meta") or {}
-    wrote_any = False
-
-    # Utilizatorlar
-    sec = _clean_df(report.get("utilizator_counts"))
-    if not sec.empty:
-        wrote_any = True; _add_heading(doc, "Utilizatorlar", level=2); _add_df_table(doc, sec)
-
-    # Təsnifat
-    t1 = report.get("tesnifat_table"); t2 = report.get("tesnifat_counts")
-    sec = _clean_df(t1 if t1 is not None else t2)
-    if not sec.empty:
-        wrote_any = True; _add_heading(doc, "Təsnifatlar üzrə", level=2); _add_df_table(doc, sec)
-
-    # Statuslar
-    for key, title in [("tesdiq_status_totals","Təsdiq statusu"),
-                       ("tehvil_status_totals","Təhvil statusu")]:
-        sec = _clean_df(report.get(key))
-        if not sec.empty:
-            wrote_any = True; _add_heading(doc, title, level=2); _add_df_table(doc, sec)
-
-    # TOP-lar — başlıq N-ə görə dinamik
-    top_map = [
-        ("top_erizeci", "Ərizəçi Top", "erizeci_N"),
-        ("top_marka",   "Marka Top",   "marka_N"),
-        ("top_model",   "Model Top",   "model_N"),
-        ("top_reng",    "Rəng Top",    "reng_N"),
+    # 3+) Digər bölmələr – dinamik başlıqlar + Sıra №
+    meta = report.get("top_counts_meta", {})
+    sections = [
+        ("3) Təsdiqedici sənədin statusları — yekun", "tesdiq_status_totals",
+         ["Təsdiq edici sənədin statusu", "Say"], False, ["Təsdiq edici sənədin statusu"]),
+        ("4) Təhvil-təslim sənədinin statusları — yekun", "tehvil_status_totals",
+         ["Təhvil-təslim sənədinin statusu", "Say"], False, ["Təhvil-təslim sənədinin statusu"]),
+        (f"5) Top {meta.get('erizeci_N', 50)} Ərizəçi", "top_erizeci",
+         ["Ərizəçinin tam adı", "Say"], True, None),
+        (f"6) Marka Top {meta.get('marka_N', 20)}", "top_marka",
+         ["Marka", "Say"], True, None),
+        (f"7) Modellər üzrə Top {meta.get('model_N', 10)}", "top_model",
+         ["Marka", "Model", "Say"], True, None),
+        (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng",
+         ["Rəng", "Say"], True, None),
+        ("9) NV yaşları 10illik intervallarda — yekun", "year_bins",
+         ["Buraxılış ili", "Say"], False, None),
     ]
-    for key, base_title, meta_key in top_map:
-        sec = _clean_df(report.get(key))
-        if not sec.empty:
-            N = int(meta.get(meta_key) or len(sec))
-            title = f"{base_title} {N}"
-            wrote_any = True; _add_heading(doc, title, level=2); _add_df_table(doc, sec)
+    for title, key, pref, add_no, drop_keys in sections:
+        doc.add_heading(title, level=2)
+        d = report.get(key, pd.DataFrame())
+        if isinstance(d, pd.DataFrame) and not d.empty:
+            dx = d.copy()
 
-    # İllər üzrə
-    sec = _clean_df(report.get("year_bins"))
-    if not sec.empty:
-        wrote_any = True; _add_heading(doc, "NV yaşları 10 illik intervallarda — yekun", level=2); _add_df_table(doc, sec)
+            # Status cədvəllərində boş/NaN dəyərləri TAMAMİLƏ çıxar
+            if drop_keys:
+                dx = _drop_blank_rows(dx, drop_keys)
 
-    if not wrote_any:
-        _add_heading(doc, "Məlumat yoxdur", level=2)
-        p = doc.add_paragraph(str(report.get("summary") or "Seçilmiş filtr üçün uyğun sətir tapılmadı."))
-        for r in p.runs: r.font.name = FONT_NAME; r.font.size = Pt(10)
+            for col in dx.columns:
+                if pd.api.types.is_numeric_dtype(dx[col]):
+                    dx[col] = pd.to_numeric(dx[col], errors="coerce").fillna(0).astype(int)
 
-    bio = BytesIO(); doc.save(bio); bio.seek(0)
+            if not dx.empty:
+                _add_table(doc, _subset(dx, pref), add_rownum=add_no)
+            else:
+                doc.add_paragraph("Məlumat yoxdur.")
+        else:
+            doc.add_paragraph("Məlumat yoxdur.")
+
+    bio = BytesIO()
+    doc.save(bio)
     return bio.getvalue()
 
 
-# ============== XLSX ==============
-try:
-    from openpyxl.styles import Font as XLFont, PatternFill, Alignment as XLAlignment
-except Exception:
-    XLFont = PatternFill = XLAlignment = None
+# -------------------- XLSX --------------------
+def export_xlsx(report: Dict[str, Any]) -> bytes:
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="xlsxwriter") as xw:
+        for key, val in report.items():
+            if isinstance(val, pd.DataFrame) and not val.empty:
+                val.to_excel(xw, sheet_name=key[:31], index=False)
 
-def _style_openpyxl_worksheet(ws, df: pd.DataFrame):
-    if ws is None or XLFont is None: return
-    header_fill = PatternFill("solid", fgColor="D9E1F2")
-    for cell in ws[1]:
-        cell.font = XLFont(bold=True); cell.fill = header_fill; cell.alignment = XLAlignment(vertical="center")
-    for idx, col in enumerate(df.columns, start=1):
-        max_len = len(str(col))
-        for v in df[col].astype(str).values[:500]:
-            max_len = max(max_len, len(v))
-        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = min(max(10, int(max_len*1.2)+2), 60)
+        # Utilizator cədvəlini CƏM sətiri ilə də ayrıca yaz
+        util = report.get("utilizator_counts")
+        if isinstance(util, pd.DataFrame) and not util.empty and util.shape[1] >= 2:
+            util2 = util.copy()
+            util2.iloc[:, 1] = pd.to_numeric(util2.iloc[:, 1], errors="coerce").fillna(0).astype(int)
+            util2.loc[len(util2), util2.columns[0]] = "CƏM"
+            util2.loc[len(util2) - 1, util2.columns[1]] = int(util2.iloc[:-1, 1].sum())
+            util2.to_excel(xw, sheet_name="utilizator_counts", index=False)
 
-def export_xlsx(report: dict) -> bytes:
-    """openpyxl ilə XLSX; PowerBI_Feed vərəqi; boş olanda README."""
-    from pandas import ExcelWriter
-    bio = BytesIO(); wrote_any = False
+        # Təsnifat: hazır cədvəl yoxdursa baza yaz
+        tbl = report.get("tesnifat_table")
+        if not (isinstance(tbl, pd.DataFrame) and not tbl.empty):
+            base = report.get("tesnifat_counts", pd.DataFrame())
+            if isinstance(base, pd.DataFrame) and not base.empty:
+                _subset(base, ["Təsnifat", "Say"]).to_excel(
+                    xw, sheet_name="tesnifatlar", index=False
+                )
 
-    with ExcelWriter(bio, engine="openpyxl") as writer:
-        # Utilizatorlar
-        df = report.get("utilizator_counts")
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            name = "Utilizatorlar"; df.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df); wrote_any = True
-
-        # Təsnifat
-        t1 = report.get("tesnifat_table"); t2 = report.get("tesnifat_counts")
-        df = t1 if (isinstance(t1, pd.DataFrame) and not t1.empty) else (t2 if isinstance(t2, pd.DataFrame) else None)
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            name = "Təsnifat"; df.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df); wrote_any = True
-
-        # Status + TOP + İllər
-        for key, name in [
-            ("tesdiq_status_totals", "Təsdiq statusu"),
-            ("tehvil_status_totals","Təhvil statusu"),
-            ("top_erizeci",         "Top ərizəçi"),
-            ("top_marka",           "Top marka"),
-            ("top_model",           "Top model"),
-            ("top_reng",            "Top rəng"),
-            ("year_bins",           "İllər üzrə"),
-        ]:
-            df = report.get(key)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df.to_excel(writer, sheet_name=name, index=False)
-                _style_openpyxl_worksheet(writer.sheets.get(name), df); wrote_any = True
-
-        # Parametrlər (Top-N meta)
-        meta = report.get("top_counts_meta")
-        if isinstance(meta, dict) and meta:
-            df_meta = pd.DataFrame([meta])
-            name = "Parametrlər"; df_meta.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df_meta); wrote_any = True
-
-        # Power BI feed (tek-sheet)
-        feed = report.get("powerbi_feed")
-        if isinstance(feed, pd.DataFrame) and not feed.empty:
-            name = "PowerBI_Feed"; feed.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), feed); wrote_any = True
-
-        if not wrote_any:
-            readme = pd.DataFrame({
-                "Info": ["No data tables were available to export."],
-                "GeneratedAt": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                "Hint": ["Check filters and input file, then retry."],
-            })
-            name = "README"; readme.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), readme)
-
-    bio.seek(0); return bio.getvalue()
+    return bio.getvalue()
