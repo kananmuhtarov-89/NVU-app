@@ -8,7 +8,8 @@ import numpy as np
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.shared import OxmlElement, qn
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 H1_COLOR = RGBColor(31, 78, 121)     # tünd mavi
 H2_COLOR = RGBColor(0, 112, 192)     # mavi
@@ -63,12 +64,36 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     out = out.dropna(how="all")
     return out
 
-def _table_borderless(tbl):
-    tblPr = tbl._element.get_or_add_tblPr()
-    tblBorders = OxmlElement('w:tblBorders')
-    for edge in ('top','left','bottom','right','insideH','insideV'):
-        e = OxmlElement(f'w:{edge}'); e.set(qn('w:val'), 'nil'); tblBorders.append(e)
-    tblPr.append(tblBorders)
+def _table_borderless(table):
+    """python-docx üçün sərhədləri 'nil' edən təhlükəsiz versiya."""
+    tbl = table._element  # CT_Tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement('w:tblPr')
+        tbl.append(tblPr)
+
+    # mövcud tblBorders varsa götür, yoxdursa yarad
+    tblBorders = None
+    for child in tblPr.iterchildren():
+        if child.tag == qn('w:tblBorders'):
+            tblBorders = child
+            break
+    if tblBorders is None:
+        tblBorders = OxmlElement('w:tblBorders')
+        tblPr.append(tblBorders)
+
+    # hər kənar üçün val='nil'
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        tag = qn(f'w:{edge}')
+        elem = None
+        for child in tblBorders.iterchildren():
+            if child.tag == tag:
+                elem = child
+                break
+        if elem is None:
+            elem = OxmlElement(f'w:{edge}')
+            tblBorders.append(elem)
+        elem.set(qn('w:val'), 'nil')
 
 def _add_df_table(doc: Document, df: pd.DataFrame):
     df = _clean_df(df)
@@ -127,9 +152,8 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "Utilizatorlar", level=2); _add_df_table(doc, sec)
 
-    # Təsnifat  (!!! 'or' YOXDUR — ambiguity xətası üçün)
-    t1 = report.get("tesnifat_table")
-    t2 = report.get("tesnifat_counts")
+    # Təsnifat  (DataFrame-lərdə 'or' YOXDUR)
+    t1 = report.get("tesnifat_table"); t2 = report.get("tesnifat_counts")
     sec = _clean_df(t1 if t1 is not None else t2)
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "Təsnifatlar üzrə", level=2); _add_df_table(doc, sec)
@@ -192,7 +216,7 @@ def export_xlsx(report: dict) -> bytes:
     """
     report-dakı DataFrame-ləri ayrıca vərəqlərə yazır (openpyxl).
     'powerbi_feed' varsa, onu 'PowerBI_Feed' vərəqinə əlavə edir.
-    Heç bir vərəq yazılmasa, README vərəqi əlavə olunur (openpyxl xəta verməsin).
+    Heç bir vərəq yazılmayanda README vərəqi əlavə olunur.
     """
     from pandas import ExcelWriter
     bio = BytesIO()
@@ -226,7 +250,7 @@ def export_xlsx(report: dict) -> bytes:
                 _style_openpyxl_worksheet(writer.sheets.get(name), df)
                 wrote_any = True
 
-        # Parametrlər (Top-N metadata)
+        # Parametrlər
         meta = report.get("top_counts_meta")
         if isinstance(meta, dict) and meta:
             df_meta = pd.DataFrame([meta])
