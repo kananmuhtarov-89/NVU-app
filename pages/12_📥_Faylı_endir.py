@@ -19,6 +19,9 @@ source_filename = st.session_state.get("source_filename", "")
 
 # 1) Report obyektini topla
 report = {}
+# Force: calc_amounts toggledən gəlsin (Word üçün)
+report["tesnifat_settings"] = {"calc_amounts": bool(st.session_state.get("tesnifat_calc", False))}
+
 for key in [
     "utilizator_counts",
     "tesnifat_table", "tesnifat_counts", "tesnifat_settings",
