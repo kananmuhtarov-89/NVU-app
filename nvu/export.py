@@ -287,98 +287,29 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
 
 
 # -------------------- XLSX --------------------
-from io import BytesIO
-import pandas as pd
-
-# ↑ faylın yuxarı hissəsində importlar arasında openpyxl üçün stil utilitlərini də gətirəcəyik
-try:
-    from openpyxl.styles import Font, PatternFill, Alignment
-except Exception:
-    Font = PatternFill = Alignment = None  # mühitdə openpyxl olmazsa stil tətbiq etməyəcəyik
-
-
-def _style_openpyxl_worksheet(ws, df: pd.DataFrame):
-    """
-    Power BI üçün oxunaqlı olmaq naminə:
-    - Header-ları bold + açıq mavi fon
-    - Sütunları kontent uzunluğuna görə genişləndir
-    Bu funksiya yalnız openpyxl mühərrikində işləyir.
-    """
-    if ws is None or Font is None:
-        return
-    # Header stilləri
-    header_fill = PatternFill("solid", fgColor="D9E1F2")
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
-        cell.alignment = Alignment(vertical="center")
-
-    # Autosize sütunlar
-    for idx, col in enumerate(df.columns, start=1):
-        # maksimum uzunluq: header və bu sütundakı dəyərlər
-        max_len = len(str(col))
-        for v in df[col].astype(str).values[:500]:  # çox böyük fayllarda sürət üçün 500-ə qədər baxaq
-            max_len = max(max_len, len(v))
-        # excel ölçüsü təxmini: simvol sayının ~1.2 qatı + bufer
-        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = min(max(10, int(max_len * 1.2) + 2), 60)
-
-
-def export_xlsx(report: dict) -> bytes:
-    """
-    Mövcud məntiqin eynisi saxlanılır:
-    - report-dakı DataFrame-lər ayrı-ayrı vərəqlərə yazılır.
-    - xlsxwriter tələb etmədən openpyxl ilə yazırıq.
-    - Əlavə olaraq hər vərəqin header-ları bold + açıq mavi olur və sütunlar autosize edilir.
-    """
+def export_xlsx(report: Dict[str, Any]) -> bytes:
     bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="xlsxwriter") as xw:
+        for key, val in report.items():
+            if isinstance(val, pd.DataFrame) and not val.empty:
+                val.to_excel(xw, sheet_name=key[:31], index=False)
 
-    # Pandas writer: openpyxl
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        # BURADA SƏNİN MÖVCUD SHEET YAZMA MƏNTİQİNİ QOYURUQ.
-        # Məs: utilizator_counts, tesnifat_table və s. – mövcud kodundakı ardıcıllıqla.
-        # Aşağıdakı nümunə yazma pattern-i saxla və sənin DF-lərini bununla yaz.
-        # ---------------------------------------------------------------------
-        # NÜMUNƏ: (mövcud kodundakı hissələri saxlayıb bu pattern-lə yaz)
-        if isinstance(report.get("utilizator_counts"), pd.DataFrame):
-            df = report["utilizator_counts"]
-            sheet_name = "Utilizatorlar"
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-            _style_openpyxl_worksheet(writer.sheets.get(sheet_name), df)
+        # Utilizator cədvəlini CƏM sətiri ilə də ayrıca yaz
+        util = report.get("utilizator_counts")
+        if isinstance(util, pd.DataFrame) and not util.empty and util.shape[1] >= 2:
+            util2 = util.copy()
+            util2.iloc[:, 1] = pd.to_numeric(util2.iloc[:, 1], errors="coerce").fillna(0).astype(int)
+            util2.loc[len(util2), util2.columns[0]] = "CƏM"
+            util2.loc[len(util2) - 1, util2.columns[1]] = int(util2.iloc[:-1, 1].sum())
+            util2.to_excel(xw, sheet_name="utilizator_counts", index=False)
 
-        if isinstance(report.get("tesnifat_table"), pd.DataFrame):
-            df = report["tesnifat_table"]
-            sheet_name = "Təsnifat"
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-            _style_openpyxl_worksheet(writer.sheets.get(sheet_name), df)
-        elif isinstance(report.get("tesnifat_counts"), pd.DataFrame):
-            df = report["tesnifat_counts"]
-            sheet_name = "Təsnifat"
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-            _style_openpyxl_worksheet(writer.sheets.get(sheet_name), df)
+        # Təsnifat: hazır cədvəl yoxdursa baza yaz
+        tbl = report.get("tesnifat_table")
+        if not (isinstance(tbl, pd.DataFrame) and not tbl.empty):
+            base = report.get("tesnifat_counts", pd.DataFrame())
+            if isinstance(base, pd.DataFrame) and not base.empty:
+                _subset(base, ["Təsnifat", "Say"]).to_excel(
+                    xw, sheet_name="tesnifatlar", index=False
+                )
 
-        # Digər bölmələr (status cədvəlləri, top_* və s.)
-        for key, sheet_name in [
-            ("tesdiq_status_totals", "Təsdiq statusu"),
-            ("tehvil_status_totals", "Təhvil statusu"),
-            ("top_erizeci",          "Top ərizəçi"),
-            ("top_marka",            "Top marka"),
-            ("top_model",            "Top model"),
-            ("top_reng",             "Top rəng"),
-            ("year_bins",            "İllər üzrə"),
-        ]:
-            df = report.get(key)
-            if isinstance(df, pd.DataFrame):
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-                _style_openpyxl_worksheet(writer.sheets.get(sheet_name), df)
-
-        # Top-N parametrləri metadata (Power BI üçün faydalıdır)
-        meta = report.get("top_counts_meta")
-        if isinstance(meta, dict) and meta:
-            meta_df = pd.DataFrame([meta])
-            sheet_name = "Parametrlər"
-            meta_df.to_excel(writer, sheet_name=sheet_name, index=False)
-            _style_openpyxl_worksheet(writer.sheets.get(sheet_name), meta_df)
-        # ---------------------------------------------------------------------
-
-    bio.seek(0)
     return bio.getvalue()
