@@ -50,7 +50,7 @@ def _shade_cell(cell, fill_hex: str = "D9E1F2"):
 
 def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
     """
-    Cədvəldə bütün hüceyrələr üçün eyni margin (twips) – header və data sətrlərində simmetriya üçün.
+    Cədvəldə bütün hüceyrələr üçün eyni margin (twips).
     1 pt ≈ 20 twips, 80 twips ≈ 4 pt.
     """
     try:
@@ -103,7 +103,7 @@ def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
-    """Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil."""
+    """Boş/Nan/“—” sətirləri sil."""
     dfx = df.copy()
     mask = pd.Series(True, index=dfx.index)
     for c in key_cols:
@@ -180,7 +180,7 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     # Başlıq
     doc.add_heading("NVU Arayış Paneli — Hesabat", level=1)
 
-    # Mənbə fayl əvəzinə hesabat tarixi (qırmızı)
+    # Hesabat tarixi (qırmızı)
     p = doc.add_paragraph()
     r1 = p.add_run("Hesabat tarixi: ")
     r1.bold = True
@@ -209,6 +209,25 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
         t = _subset(ready, pref)
 
+        # --- PATCH ESLI_3: calc ON-dursa, amma 'Cəmi (AZN)' yoxdursa, kod dərəcələri ilə hesabla
+        if calc and "Cəmi (AZN)" not in t.columns and "Say" in t.columns:
+            code_col = "Kod" if "Kod" in t.columns else ("Təsnifat" if "Təsnifat" in t.columns else None)
+            if code_col is not None:
+                # NK №61 baza məbləğləri (G variantları eyni məbləğ)
+                _rates = {
+                    "M1": 1500, "M2": 2000, "M3": 3000,
+                    "N1": 1500, "N2": 2000, "N3": 3000,
+                    "T": 2000, "TK": 2000, "TT": 2000,
+                    "H": 3000, "HT": 3000, "HK": 3000,
+                    "L": 200,
+                }
+                def _normalize_code(x: str) -> str:
+                    s = str(x).strip().upper()
+                    return s[:-1] if s.endswith("G") and s[:-1] in _rates else s
+                rates_series = t[code_col].map(_normalize_code).map(lambda c: _rates.get(c, 0))
+                say_series = pd.to_numeric(t["Say"], errors="coerce").fillna(0).astype(int)
+                t["Cəmi (AZN)"] = (rates_series * say_series).astype(int)
+
         # Çıxışda göstəriləcək sütunları hazırla
         cols = []
         if "Kod" in t.columns:
@@ -222,7 +241,7 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
             cols.append("Cəmi (AZN)")
 
         t_display = t[cols].copy()
-        # 1-ci sütunu mütləq “Təsnifat” adı ilə göstər
+        # 1-ci sütunu “Təsnifat” adı ilə göstər
         if len(t_display.columns) > 0:
             first_col = t_display.columns[0]
             t_display.rename(columns={first_col: "Təsnifat"}, inplace=True)
@@ -242,7 +261,7 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         t = _subset(base, ["Təsnifat", "Say"])
         _add_table(doc, t, add_rownum=False)
 
-    # 3+) Digər bölmələr – dinamik başlıqlar + Sıra №
+    # 3+) Digər bölmələr — dinamik başlıqlar + Sıra №
     meta = report.get("top_counts_meta", {})
     sections = [
         ("3) Təsdiqedici sənədin statusları — yekun", "tesdiq_status_totals",
@@ -266,7 +285,7 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         if isinstance(d, pd.DataFrame) and not d.empty:
             dx = d.copy()
 
-            # Status cədvəllərində boş/NaN dəyərləri TAMAMİLƏ çıxar
+            # Status cədvəllərində boş/NaN dəyərləri çıxar
             if drop_keys:
                 dx = _drop_blank_rows(dx, drop_keys)
 
@@ -287,58 +306,30 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
 
 
 # -------------------- XLSX --------------------
-from io import BytesIO
-import pandas as pd
-
-# ↑ faylın yuxarı hissəsində importlar arasında openpyxl üçün stil utilitlərini də gətirəcəyik
 try:
     from openpyxl.styles import Font, PatternFill, Alignment
 except Exception:
-    Font = PatternFill = Alignment = None  # mühitdə openpyxl olmazsa stil tətbiq etməyəcəyik
+    Font = PatternFill = Alignment = None
 
 
 def _style_openpyxl_worksheet(ws, df: pd.DataFrame):
-    """
-    Power BI üçün oxunaqlı olmaq naminə:
-    - Header-ları bold + açıq mavi fon
-    - Sütunları kontent uzunluğuna görə genişləndir
-    Bu funksiya yalnız openpyxl mühərrikində işləyir.
-    """
     if ws is None or Font is None:
         return
-    # Header stilləri
     header_fill = PatternFill("solid", fgColor="D9E1F2")
     for cell in ws[1]:
         cell.font = Font(bold=True)
         cell.fill = header_fill
         cell.alignment = Alignment(vertical="center")
-
-    # Autosize sütunlar
     for idx, col in enumerate(df.columns, start=1):
-        # maksimum uzunluq: header və bu sütundakı dəyərlər
         max_len = len(str(col))
-        for v in df[col].astype(str).values[:500]:  # çox böyük fayllarda sürət üçün 500-ə qədər baxaq
+        for v in df[col].astype(str).values[:500]:
             max_len = max(max_len, len(v))
-        # excel ölçüsü təxmini: simvol sayının ~1.2 qatı + bufer
         ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = min(max(10, int(max_len * 1.2) + 2), 60)
 
 
 def export_xlsx(report: dict) -> bytes:
-    """
-    Mövcud məntiqin eynisi saxlanılır:
-    - report-dakı DataFrame-lər ayrı-ayrı vərəqlərə yazılır.
-    - xlsxwriter tələb etmədən openpyxl ilə yazırıq.
-    - Əlavə olaraq hər vərəqin header-ları bold + açıq mavi olur və sütunlar autosize edilir.
-    """
     bio = BytesIO()
-
-    # Pandas writer: openpyxl
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        # BURADA SƏNİN MÖVCUD SHEET YAZMA MƏNTİQİNİ QOYURUQ.
-        # Məs: utilizator_counts, tesnifat_table və s. – mövcud kodundakı ardıcıllıqla.
-        # Aşağıdakı nümunə yazma pattern-i saxla və sənin DF-lərini bununla yaz.
-        # ---------------------------------------------------------------------
-        # NÜMUNƏ: (mövcud kodundakı hissələri saxlayıb bu pattern-lə yaz)
         if isinstance(report.get("utilizator_counts"), pd.DataFrame):
             df = report["utilizator_counts"]
             sheet_name = "Utilizatorlar"
@@ -356,7 +347,6 @@ def export_xlsx(report: dict) -> bytes:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
             _style_openpyxl_worksheet(writer.sheets.get(sheet_name), df)
 
-        # Digər bölmələr (status cədvəlləri, top_* və s.)
         for key, sheet_name in [
             ("tesdiq_status_totals", "Təsdiq statusu"),
             ("tehvil_status_totals", "Təhvil statusu"),
@@ -371,14 +361,12 @@ def export_xlsx(report: dict) -> bytes:
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
                 _style_openpyxl_worksheet(writer.sheets.get(sheet_name), df)
 
-        # Top-N parametrləri metadata (Power BI üçün faydalıdır)
         meta = report.get("top_counts_meta")
         if isinstance(meta, dict) and meta:
             meta_df = pd.DataFrame([meta])
             sheet_name = "Parametrlər"
             meta_df.to_excel(writer, sheet_name=sheet_name, index=False)
             _style_openpyxl_worksheet(writer.sheets.get(sheet_name), meta_df)
-        # ---------------------------------------------------------------------
 
     bio.seek(0)
     return bio.getvalue()
