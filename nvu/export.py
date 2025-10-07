@@ -65,35 +65,25 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def _table_borderless(table):
-    """python-docx üçün sərhədləri 'nil' edən təhlükəsiz versiya."""
+    """Sərhədləri 'nil' edən təhlükəsiz, minimal versiya (AttributeError yoxdur)."""
     tbl = table._element  # CT_Tbl
     tblPr = tbl.tblPr
     if tblPr is None:
         tblPr = OxmlElement('w:tblPr')
-        tbl.append(tblPr)
+        # tblPr-i ən əvvələ yerləşdirmək daha düzgündür
+        if len(tbl) > 0:
+            tbl.insert(0, tblPr)
+        else:
+            tbl.append(tblPr)
 
-    # mövcud tblBorders varsa götür, yoxdursa yarad
-    tblBorders = None
-    for child in tblPr.iterchildren():
-        if child.tag == qn('w:tblBorders'):
-            tblBorders = child
-            break
-    if tblBorders is None:
-        tblBorders = OxmlElement('w:tblBorders')
-        tblPr.append(tblBorders)
-
-    # hər kənar üçün val='nil'
+    tblBorders = OxmlElement('w:tblBorders')
     for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-        tag = qn(f'w:{edge}')
-        elem = None
-        for child in tblBorders.iterchildren():
-            if child.tag == tag:
-                elem = child
-                break
-        if elem is None:
-            elem = OxmlElement(f'w:{edge}')
-            tblBorders.append(elem)
-        elem.set(qn('w:val'), 'nil')
+        e = OxmlElement(f'w:{edge}')
+        e.set(qn('w:val'), 'nil')
+        tblBorders.append(e)
+
+    # Mövcud olmasına baxmayaraq, sonuncunu əlavə edirik; Word sonuncu təyini tətbiq edir
+    tblPr.append(tblBorders)
 
 def _add_df_table(doc: Document, df: pd.DataFrame):
     df = _clean_df(df)
@@ -133,11 +123,7 @@ def _add_df_table(doc: Document, df: pd.DataFrame):
     doc.add_paragraph()  # boş sətir
 
 def export_docx(report: dict, source_filename: str = "") -> bytes:
-    """
-    NVU DOCX: sabit, təhlükəsiz.
-    - Boş cədvəllər atlanır, tam boş halda xəbərdarlıq yazılır.
-    - Arial, rəngli heading, borderless table.
-    """
+    """NVU DOCX: sabit və təhlükəsiz. Arial, rəngli heading, borderless cədvəl."""
     doc = Document()
     _set_doc_defaults(doc)
     _set_header_footer(doc)
@@ -152,7 +138,7 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "Utilizatorlar", level=2); _add_df_table(doc, sec)
 
-    # Təsnifat  (DataFrame-lərdə 'or' YOXDUR)
+    # Təsnifat (DataFrame-lərdə 'or' YOXDUR)
     t1 = report.get("tesnifat_table"); t2 = report.get("tesnifat_counts")
     sec = _clean_df(t1 if t1 is not None else t2)
     if not sec.empty:
@@ -179,7 +165,6 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "NV yaşları 10 illik intervallarda — yekun", level=2); _add_df_table(doc, sec)
 
-    # Tam boşdursa xəbərdarlıq paragrafı
     if not wrote_any:
         _add_heading(doc, "Məlumat yoxdur", level=2)
         msg = report.get("summary") or "Seçilmiş filtr üçün uyğun sətir tapılmadı."
@@ -194,7 +179,6 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
 
 
 # ===================== XLSX =====================
-# openpyxl stilləri (opsional)
 try:
     from openpyxl.styles import Font as XLFont, PatternFill, Alignment as XLAlignment
 except Exception:
@@ -213,11 +197,7 @@ def _style_openpyxl_worksheet(ws, df: pd.DataFrame):
         ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = min(max(10, int(max_len * 1.2) + 2), 60)
 
 def export_xlsx(report: dict) -> bytes:
-    """
-    report-dakı DataFrame-ləri ayrıca vərəqlərə yazır (openpyxl).
-    'powerbi_feed' varsa, onu 'PowerBI_Feed' vərəqinə əlavə edir.
-    Heç bir vərəq yazılmayanda README vərəqi əlavə olunur.
-    """
+    """openpyxl ilə XLSX; PowerBI_Feed və README ehtiyatı."""
     from pandas import ExcelWriter
     bio = BytesIO()
     wrote_any = False
@@ -261,7 +241,6 @@ def export_xlsx(report: dict) -> bytes:
         if isinstance(feed, pd.DataFrame) and not feed.empty:
             name = "PowerBI_Feed"; feed.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), feed); wrote_any = True
 
-        # README (heç bir vərəq yazılmayıbsa)
         if not wrote_any:
             readme = pd.DataFrame({
                 "Info": ["No data tables were available to export."],
