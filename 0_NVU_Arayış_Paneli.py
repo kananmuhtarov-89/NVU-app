@@ -1,6 +1,3 @@
-# 0_NVU_Arayış_Paneli.py
-# Sidebar: tarix mənbəyi / il (default = Hamısı), ay (Hamısı) və aktiv filtrə görə df_clean hasil edilir.
-
 import streamlit as st
 import pandas as pd
 from nvu.settings import get_settings
@@ -17,7 +14,6 @@ for key in ("df_clean_full", "df_full", "df"):
         df_full = obj
         break
 
-# Əgər hələ fayl yüklənməyibsə, mesaj verib çıxaq
 if df_full is None or len(df_full) == 0:
     st.sidebar.info("Faylı yükləyin (pages/1_📤_Faylı_yüklə.py).")
     st.write("Məlumat yoxdur. Zəhmət olmasa faylı yükləyin.")
@@ -48,9 +44,21 @@ SOURCE_LABELS = {
 }
 
 # =========================================================
-# 2) Tarix seriyasını qur (seçilmiş mənbəyə görə)
+# 2) Tarix seriyası (dt_*) və ya xəritədən — KOMPOZİT üçün fallback
 # =========================================================
 def _date_series_by_source(df: pd.DataFrame, source_key: str) -> pd.Series | None:
+    # 1) Əvvəl dt_* sütunlarından istifadə et (pages/1 faylı bunları yaradır)
+    dt_cols = {
+        "R": "dt_R",
+        "AB": "dt_AB",
+        "AF": "dt_AF",
+        "KOMPOZIT": "dt_KOMPOZIT",
+    }
+    dt_col = dt_cols.get(source_key)
+    if dt_col and dt_col in df.columns:
+        return pd.to_datetime(df[dt_col], errors="coerce")
+
+    # 2) Xəritədən gələn xam sütunlara fallback
     sR  = pd.to_datetime(df[COL_R],  errors="coerce") if (COL_R  in df.columns) else None
     sAB = pd.to_datetime(df[COL_AB], errors="coerce") if (COL_AB in df.columns) else None
     sAF = pd.to_datetime(df[COL_AF], errors="coerce") if (COL_AF in df.columns) else None
@@ -62,31 +70,54 @@ def _date_series_by_source(df: pd.DataFrame, source_key: str) -> pd.Series | Non
     if source_key == "AF":
         return sAF
     if source_key == "KOMPOZIT":
+        # varsa dt_* yox, xəritədən CONCAT+MAX et
         parts = [s for s in (sR, sAB, sAF) if s is not None]
         if not parts:
             return None
         return pd.concat(parts, axis=1).max(axis=1)
+
     return None
 
+def _years_available(df: pd.DataFrame, source_key: str, date_series: pd.Series | None) -> list[int]:
+    """İlləri dt_/xəritədən çıxara bilməsək belə, il_* sütunlarından oxu."""
+    # 1) date_series varsa ondan çıxar
+    if date_series is not None and date_series.notna().any():
+        return sorted(date_series.dropna().dt.year.astype(int).unique().tolist())
+
+    # 2) il_* sütunlarına fallback (pages/1 faylında yaranır)
+    year_cols = {
+        "R": "il_R",
+        "AB": "il_AB",
+        "AF": "il_AF",
+        "KOMPOZIT": "il_KOMPOZIT",
+    }
+    ycol = year_cols.get(source_key)
+    if ycol and ycol in df.columns:
+        vals = pd.to_numeric(df[ycol], errors="coerce")
+        years = sorted(pd.Series(vals).dropna().astype(int).unique().tolist())
+        return years
+
+    # 3) heç nə tapılmadısa boş
+    return []
+
 # =========================================================
-# 3) Sidebar UI  — DƏYİŞİKLİK: default = Hamısı, multiselect helper
+# 3) Sidebar (default = Hamısı + 2 sətirlik helper)
 # =========================================================
 st.sidebar.header("Filtr")
 
 # 3.1) Tarix mənbəyi (yalnız 4 variant)
 date_source_options = [SOURCE_LABELS[k] for k in ("R", "AB", "AF", "KOMPOZIT")]
 source_label = st.sidebar.selectbox("Tarix mənbəyi", date_source_options, index=0)
-source_key = [k for k, v in SOURCE_LABELS.items() if v == source_label][0]  # "R"/"AB"/"AF"/"KOMPOZIT"
+source_key = [k for k, v in SOURCE_LABELS.items() if v == source_label][0]
 
 date_series = _date_series_by_source(df_full, source_key)
-has_data = date_series is not None and date_series.notna().any()
 
 # 3.2) İl rejimi (default = Hamısı)
 year_mode = st.sidebar.radio("İl rejimi", ["Hamısı", "Seçilən illər"],
-                             index=0, horizontal=True, disabled=not has_data)
+                             index=0, horizontal=True)
 
 # 3.3) İllər (multiselect) — yalnız “Seçilən illər” rejimində aktiv
-years_available = sorted(date_series.dropna().dt.year.astype(int).unique().tolist()) if has_data else []
+years_available = _years_available(df_full, source_key, date_series)
 
 # ---- 2 SƏTİRLİK HELPER (default illər) ----
 years_all = years_available[:]  # mövcud illər
@@ -97,12 +128,12 @@ year_select = st.sidebar.multiselect(
     "İllər",
     options=years_available,
     default=default_years,
-    disabled=not (has_data and year_mode == "Seçilən illər"),
+    disabled=not (year_mode == "Seçilən illər"),
 )
 
-# 3.4) Ay rejimi (mövcud məntiqi saxlayırıq — default Hamısı)
+# 3.4) Ay rejimi (default = Hamısı)
 month_mode = st.sidebar.radio("Ay rejimi", ["Hamısı", "Seçilən aylar"],
-                              index=0, horizontal=True, disabled=not has_data)
+                              index=0, horizontal=True)
 
 AZ_MONTHS = {
     1: "Yan", 2: "Fev", 3: "Mar", 4: "Apr", 5: "May", 6: "İyn",
@@ -113,8 +144,8 @@ months_select = st.sidebar.multiselect(
     "Aylar",
     options=month_opts,
     format_func=lambda m: AZ_MONTHS.get(m, m),
-    default=month_opts,  # “Seçilən aylar” rejiminə keçəndə hamısı ön seçili
-    disabled=not (has_data and month_mode == "Seçilən aylar"),
+    default=month_opts,  # “Seçilən aylar” rejiminə keçəndə hamısı ön-seçili
+    disabled=not (month_mode == "Seçilən aylar"),
 )
 
 # =========================================================
@@ -147,12 +178,8 @@ def _apply_filter(df: pd.DataFrame,
     summary = f"Mənbə: {SOURCE_LABELS[src_key]} | {sum_year} | {sum_mon}"
     return df_out, summary
 
-# İl və ay üçün tətbiq ediləcək dəyərlər (Hamısı rejimində None qoyuruq)
-if year_mode == "Hamısı":
-    years_for_filter = None
-else:
-    years_for_filter = year_select or years_available  # “Seçilən illər”də boş qalarsa hamısını götür
-
+# İl və ay üçün tətbiq ediləcək dəyərlər
+years_for_filter = None if year_mode == "Hamısı" else (year_select or years_available)
 months_for_filter = None if month_mode == "Hamısı" else (months_select or month_opts)
 
 df_clean, summary = _apply_filter(df_full, source_key, years_for_filter, months_for_filter)
@@ -166,7 +193,4 @@ st.session_state["active_source_key"] = source_key
 # 5) Ekranda qısa xülasə
 # =========================================================
 st.markdown(f"**Aktiv filtr:** {summary}")
-st.caption(
-    f"Sətir sayı: {len(df_clean):,} (cəmi: {len(df_full):,})".replace(",", " ")
-)
-# st.dataframe(df_clean.head(10))
+st.caption(f"Sətir sayı: {len(df_clean):,} (cəmi: {len(df_full):,})".replace(",", " "))
