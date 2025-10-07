@@ -1,10 +1,9 @@
-# nvu/export.py
 from io import BytesIO
 from datetime import datetime
 import pandas as pd
 import numpy as np
 
-# ===================== DOCX =====================
+# ============== DOCX ==============
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -65,24 +64,20 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def _table_borderless(table):
-    """Sərhədləri 'nil' edən təhlükəsiz, minimal versiya (AttributeError yoxdur)."""
+    """Sərhədləri 'nil' edən təhlükəsiz, minimal versiya."""
     tbl = table._element  # CT_Tbl
     tblPr = tbl.tblPr
     if tblPr is None:
         tblPr = OxmlElement('w:tblPr')
-        # tblPr-i ən əvvələ yerləşdirmək daha düzgündür
         if len(tbl) > 0:
             tbl.insert(0, tblPr)
         else:
             tbl.append(tblPr)
-
     tblBorders = OxmlElement('w:tblBorders')
     for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
         e = OxmlElement(f'w:{edge}')
         e.set(qn('w:val'), 'nil')
         tblBorders.append(e)
-
-    # Mövcud olmasına baxmayaraq, sonuncunu əlavə edirik; Word sonuncu təyini tətbiq edir
     tblPr.append(tblBorders)
 
 def _add_df_table(doc: Document, df: pd.DataFrame):
@@ -94,7 +89,6 @@ def _add_df_table(doc: Document, df: pd.DataFrame):
         c0 = str(df.columns[0]).strip().lower()
         if c0 in ["kod", "kod/təsnifat", "kod / təsnifat", "tesnifat", "kod tesnifat"]:
             df = df.rename(columns={df.columns[0]: "Təsnifat"})
-
     rows, cols = len(df.index), len(df.columns)
     if rows == 0 or cols == 0:
         return
@@ -178,7 +172,7 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
     return bio.getvalue()
 
 
-# ===================== XLSX =====================
+# ============== XLSX ==============
 try:
     from openpyxl.styles import Font as XLFont, PatternFill, Alignment as XLAlignment
 except Exception:
