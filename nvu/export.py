@@ -193,7 +193,19 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
 
     # 2) Təsnifat
     doc.add_heading("2) Təsnifatlar üzrə — yekun", level=2)
-    calc = bool(report.get("tesnifat_settings", {}).get("calc_amounts", False))
+    # SAFETY: tesnifat_settings dict olmaya bilər (None, DataFrame və s.)
+ts = report.get("tesnifat_settings", None)
+calc = False
+if isinstance(ts, dict):
+    calc = bool(ts.get("calc_amounts", False))
+else:
+    # Sessiyadakı toggle-a geri dönüş (əgər varsa)
+    try:
+        import streamlit as st
+        calc = bool(st.session_state.get("tesnifat_calc", False))
+    except Exception:
+        calc = False
+
     ready = report.get("tesnifat_table")
     if isinstance(ready, pd.DataFrame) and not ready.empty:
         pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
