@@ -1,3 +1,4 @@
+# 12_📥_Faylı_endir.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -128,8 +129,8 @@ if (report.get("top_marka") is None or
     report["top_marka"] = _topn(df, ["Marka"], n=N_marka)
 
 if (report.get("top_model") is None or
-    not isinstance(report.get("top_model"), pd.DataFrame) or
-    report["top_model"].empty):
+    not isinstance(report.get("top_model")), pd.DataFrame) or \
+    report["top_model"].empty:
     report["top_model"] = _topn(df, ["Marka","Model"], n=N_model)
 
 if (report.get("top_reng") is None or
