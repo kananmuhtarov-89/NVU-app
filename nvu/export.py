@@ -8,7 +8,6 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-
 # -------------------- Köməkçilər --------------------
 def _fmt_int(x: Optional[int]) -> str:
     if x is None:
@@ -17,7 +16,6 @@ def _fmt_int(x: Optional[int]) -> str:
         return f"{int(x):,}".replace(",", " ")
     except Exception:
         return str(x)
-
 
 def _make_table_borderless(table):
     """Word cədvəlində sərhədləri söndür."""
@@ -34,7 +32,6 @@ def _make_table_borderless(table):
     except Exception:
         pass
 
-
 def _shade_cell(cell, fill_hex: str = "D9E1F2"):
     """Cədvəl hüceyrəsinə fon rəngi ver (header üçün)."""
     try:
@@ -46,7 +43,6 @@ def _shade_cell(cell, fill_hex: str = "D9E1F2"):
         tcPr.append(shd)
     except Exception:
         pass
-
 
 def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
     """
@@ -77,7 +73,6 @@ def _set_table_cell_margins(table, top=80, bottom=80, left=80, right=80):
     except Exception:
         pass
 
-
 def _to_text(val) -> str:
     """NaN/boş/“nan” dəyərləri '—' kimi yaz, ədəd varsa '.0' at."""
     if pd.isna(val):
@@ -94,13 +89,11 @@ def _to_text(val) -> str:
         pass
     return s
 
-
 def _sanitize_df_for_docx(df: pd.DataFrame) -> pd.DataFrame:
     dfx = df.copy()
     for c in dfx.columns:
         dfx[c] = dfx[c].map(_to_text)
     return dfx
-
 
 def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
     """Göstərilməsini istəmədiyimiz boş/Nan/“nan”/“—” sətirləri sil."""
@@ -112,7 +105,6 @@ def _drop_blank_rows(df: pd.DataFrame, key_cols) -> pd.DataFrame:
             bad = s.isna() | (s == "") | s.str.lower().isin(["nan", "none", "—"])
             mask &= ~bad
     return dfx[mask].copy()
-
 
 def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> None:
     dfx = df.copy()
@@ -150,11 +142,9 @@ def _add_table(doc: Document, df: pd.DataFrame, add_rownum: bool = False) -> Non
             run.font.name = "Arial"
             run.font.size = Pt(11)
 
-
 def _subset(df: pd.DataFrame, preferred_cols) -> pd.DataFrame:
     cols = [c for c in preferred_cols if c in df.columns]
     return df[cols].copy() if cols else df.copy()
-
 
 # -------------------- DOCX --------------------
 def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
@@ -285,30 +275,24 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
     doc.save(bio)
     return bio.getvalue()
 
-
 # -------------------- XLSX --------------------
-# --- REPLACE ONLY THIS FUNCTION IN nvu/export.py ---
-
-from io import BytesIO
-from datetime import datetime
-import pandas as pd
-
-def export_xlsx(report: dict) -> bytes:
+def export_xlsx(report: Dict[str, Any]) -> bytes:
     """
     XLSX export (openpyxl):
-    - Mövcud bölmələri ayrıca vərəqlərə yazır (əgər varsa)
-    - 'Parametrlər' vərəqinə top_counts_meta (əgər varsa)
-    - 'PowerBI_Feed' vərəqinə report["powerbi_feed"] (əgər varsa)
-    - Heç nə yazılmayıbsa 'README' vərəqi yaradır
+      • Mövcud bölmələri ayrıca vərəqlərə yazır (əgər boş deyilsə)
+      • 'Parametrlər' vərəqinə top_counts_meta (əgər varsa)
+      • 'PowerBI_Feed' vərəqinə report['powerbi_feed'] (əgər varsa)
+      • Heç nə yazılmayıbsa 'README' vərəqi yaradır
     """
     from pandas import ExcelWriter
+    from datetime import datetime
 
     bio = BytesIO()
     wrote_any = False
 
     with ExcelWriter(bio, engine="openpyxl") as writer:
-        # 1) Standart bölmələr (varsalar yazılır — adları dəyişmirik)
-        sections = [
+        # 1) Adlandırılmış əsas vərəqlər
+        named_sections = [
             ("utilizator_counts",   "Utilizatorlar"),
             ("tesnifat_table",      "Təsnifat"),
             ("tesnifat_counts",     "Təsnifat_baza"),
@@ -320,7 +304,7 @@ def export_xlsx(report: dict) -> bytes:
             ("top_reng",            "Top_Rəng"),
             ("year_bins",           "İllər_üzrə"),
         ]
-        for key, sheet in sections:
+        for key, sheet in named_sections:
             df = report.get(key)
             if isinstance(df, pd.DataFrame) and not df.empty:
                 df.to_excel(writer, sheet_name=sheet[:31], index=False)
@@ -348,5 +332,3 @@ def export_xlsx(report: dict) -> bytes:
 
     bio.seek(0)
     return bio.getvalue()
-
-
