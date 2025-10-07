@@ -209,13 +209,6 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
         pref = ["Kod", "Təsnifat", "Say"] + (["Cəmi (AZN)"] if calc else [])
         t = _subset(ready, pref)
 
-        # --- YALNIZ ƏLAVƏ EDİLƏN 3 SƏTR (amount sütunu adını standartlaşdır) ---
-        for ac in ["Cəmi (AZN)", "Məbləğ (AZN)", "Mebleg (AZN)", "Cemi (AZN)"]:
-            if ac in t.columns:
-                t.rename(columns={ac: "Cəmi (AZN)"}, inplace=True)
-                break
-        # --- SON ---
-
         # Çıxışda göstəriləcək sütunları hazırla
         cols = []
         if "Kod" in t.columns:
