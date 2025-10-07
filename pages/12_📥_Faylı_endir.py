@@ -8,7 +8,7 @@ from nvu.settings import get_settings
 
 st.title("Export (DOCX/XLSX)")
 
-# 0) DataFrame-i təhlükəsiz götür
+# 0) DataFrame təhlükəsiz götürülməsi
 df = st.session_state.get("df_clean")
 if not isinstance(df, pd.DataFrame) or df.empty:
     df = st.session_state.get("df")
@@ -18,9 +18,8 @@ if not isinstance(df, pd.DataFrame) or df.empty:
 
 source_filename = st.session_state.get("source_filename", "")
 
-# 1) Report obyektini topla (səndə necə idisə elə qalaq)
+# 1) Report obyektini topla (mövcud axın)
 report = {}
-
 for key in [
     "utilizator_counts",
     "tesnifat_table", "tesnifat_counts", "tesnifat_settings",
@@ -30,44 +29,26 @@ for key in [
 ]:
     report[key] = st.session_state.get(key)
 
-# -----------------------------  YENİ: Top-N meta  --------------------------------
-# DOCX başlıqlarında N-lərin dinamik çıxması üçün report["top_counts_meta"] MUTLƏQ dolmalıdır.
+# YENİ: Top-N meta – DOCX başlıqları üçün N dəyərləri
 meta = st.session_state.get("top_counts_meta")
 if not isinstance(meta, dict) or not meta:
-    # Fallback – səndə param açarları belə adlana bilər:
-    # param_topN_erizeci / param_topN_marka / param_topN_model / param_topN_reng
     meta = {
-        "erizeci_N": int(
-            st.session_state.get("param_topN_erizeci")
-            or st.session_state.get("topN_applicant")
-            or st.session_state.get("topN_erizeci")
-            or 50
-        ),
-        "marka_N": int(
-            st.session_state.get("param_topN_marka")
-            or st.session_state.get("topN_brand")
-            or st.session_state.get("topN_marka")
-            or 20
-        ),
-        "model_N": int(
-            st.session_state.get("param_topN_model")
-            or st.session_state.get("topN_model")
-            or 10
-        ),
-        "reng_N": int(
-            st.session_state.get("param_topN_reng")
-            or st.session_state.get("topN_color")
-            or st.session_state.get("topN_reng")
-            or 10
-        ),
+        "erizeci_N": int(st.session_state.get("param_topN_erizeci") or 50),
+        "marka_N":   int(st.session_state.get("param_topN_marka") or 20),
+        "model_N":   int(st.session_state.get("param_topN_model") or 10),
+        "reng_N":    int(st.session_state.get("param_topN_reng")  or 10),
     }
 report["top_counts_meta"] = meta
-# -------------------------------------------------------------------------------
 
-# Filtr xülasəsi (sənəddə boş olanda mesaj üçün)
+# Sənəd boş olanda göstərmək üçün qısa mesaj
 report["summary"] = st.session_state.get("active_filter_summary") or "Seçilmiş filtr üçün uyğun sətir tapılmadı."
 
-# 2) Power BI üçün “tek-sheet feed” hazırla (əgər artıq edirdinsə – eyni qalır)
+# YENİ: tesnifat_settings guard – dict deyilsə calc_amounts sessiyadan
+ts = report.get("tesnifat_settings")
+if not isinstance(ts, dict):
+    report["tesnifat_settings"] = {"calc_amounts": bool(st.session_state.get("tesnifat_calc", False))}
+
+# 2) PowerBI üçün “tek-sheet feed”
 cfg = get_settings() or {}
 colmap = (cfg.get("column_map") or {})
 cands = {
@@ -100,7 +81,7 @@ if "Mebleg_AZN" in feed.columns:
     feed["Mebleg_AZN"] = pd.to_numeric(feed["Mebleg_AZN"], errors="coerce")
 report["powerbi_feed"] = feed
 
-# 3) Export düymələri — dəyişməyib
+# 3) Export düymələri
 c1, c2 = st.columns(2)
 
 with c1:
