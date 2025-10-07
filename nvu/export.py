@@ -10,7 +10,6 @@ from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.shared import OxmlElement, qn
 
-# Vizual konstantlar
 H1_COLOR = RGBColor(31, 78, 121)     # tünd mavi
 H2_COLOR = RGBColor(0, 112, 192)     # mavi
 FONT_NAME = "Arial"
@@ -123,20 +122,26 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
 
     wrote_any = False
 
+    # Utilizatorlar
     sec = _clean_df(report.get("utilizator_counts"))
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "Utilizatorlar", level=2); _add_df_table(doc, sec)
 
-    sec = _clean_df(report.get("tesnifat_table") or report.get("tesnifat_counts"))
+    # Təsnifat  (!!! 'or' YOXDUR — ambiguity xətası üçün)
+    t1 = report.get("tesnifat_table")
+    t2 = report.get("tesnifat_counts")
+    sec = _clean_df(t1 if t1 is not None else t2)
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "Təsnifatlar üzrə", level=2); _add_df_table(doc, sec)
 
+    # Statuslar
     for key, title in [("tesdiq_status_totals","Təsdiq statusu"),
                        ("tehvil_status_totals","Təhvil statusu")]:
         sec = _clean_df(report.get(key))
         if not sec.empty:
             wrote_any = True; _add_heading(doc, title, level=2); _add_df_table(doc, sec)
 
+    # TOP-lar
     for key, title in [("top_erizeci","Ərizəçi Top"),
                        ("top_marka","Marka Top"),
                        ("top_model","Model Top"),
@@ -145,10 +150,12 @@ def export_docx(report: dict, source_filename: str = "") -> bytes:
         if not sec.empty:
             wrote_any = True; _add_heading(doc, title, level=2); _add_df_table(doc, sec)
 
+    # İllər üzrə
     sec = _clean_df(report.get("year_bins"))
     if not sec.empty:
         wrote_any = True; _add_heading(doc, "NV yaşları 10 illik intervallarda — yekun", level=2); _add_df_table(doc, sec)
 
+    # Tam boşdursa xəbərdarlıq paragrafı
     if not wrote_any:
         _add_heading(doc, "Məlumat yoxdur", level=2)
         msg = report.get("summary") or "Seçilmiş filtr üçün uyğun sətir tapılmadı."
@@ -185,18 +192,24 @@ def export_xlsx(report: dict) -> bytes:
     """
     report-dakı DataFrame-ləri ayrıca vərəqlərə yazır (openpyxl).
     'powerbi_feed' varsa, onu 'PowerBI_Feed' vərəqinə əlavə edir.
+    Heç bir vərəq yazılmasa, README vərəqi əlavə olunur (openpyxl xəta verməsin).
     """
     from pandas import ExcelWriter
     bio = BytesIO()
+    wrote_any = False
+
     with ExcelWriter(bio, engine="openpyxl") as writer:
         # Utilizatorlar
         df = report.get("utilizator_counts")
         if isinstance(df, pd.DataFrame) and not df.empty:
-            name = "Utilizatorlar"; df.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df)
+            name = "Utilizatorlar"; df.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df); wrote_any = True
+
         # Təsnifat
-        df = report.get("tesnifat_table") or report.get("tesnifat_counts")
+        t1 = report.get("tesnifat_table"); t2 = report.get("tesnifat_counts")
+        df = t1 if (isinstance(t1, pd.DataFrame) and not t1.empty) else (t2 if isinstance(t2, pd.DataFrame) else None)
         if isinstance(df, pd.DataFrame) and not df.empty:
-            name = "Təsnifat"; df.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df)
+            name = "Təsnifat"; df.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df); wrote_any = True
+
         # Status + TOP + İllər
         for key, name in [
             ("tesdiq_status_totals", "Təsdiq statusu"),
@@ -211,15 +224,29 @@ def export_xlsx(report: dict) -> bytes:
             if isinstance(df, pd.DataFrame) and not df.empty:
                 df.to_excel(writer, sheet_name=name, index=False)
                 _style_openpyxl_worksheet(writer.sheets.get(name), df)
+                wrote_any = True
+
         # Parametrlər (Top-N metadata)
         meta = report.get("top_counts_meta")
         if isinstance(meta, dict) and meta:
             df_meta = pd.DataFrame([meta])
-            name = "Parametrlər"; df_meta.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df_meta)
+            name = "Parametrlər"; df_meta.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), df_meta); wrote_any = True
+
         # Power BI feed
         feed = report.get("powerbi_feed")
         if isinstance(feed, pd.DataFrame) and not feed.empty:
-            name = "PowerBI_Feed"; feed.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), feed)
+            name = "PowerBI_Feed"; feed.to_excel(writer, sheet_name=name, index=False); _style_openpyxl_worksheet(writer.sheets.get(name), feed); wrote_any = True
+
+        # README (heç bir vərəq yazılmayıbsa)
+        if not wrote_any:
+            readme = pd.DataFrame({
+                "Info": ["No data tables were available to export."],
+                "GeneratedAt": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                "Hint": ["Check filters and input file, then retry."],
+            })
+            name = "README"
+            readme.to_excel(writer, sheet_name=name, index=False)
+            _style_openpyxl_worksheet(writer.sheets.get(name), readme)
 
     bio.seek(0)
     return bio.getvalue()
