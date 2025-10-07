@@ -1,6 +1,5 @@
 # 0_NVU_Arayış_Paneli.py
 # Sidebar: tarix mənbəyi / il (default = Hamısı), ay (Hamısı) və aktiv filtrə görə df_clean hasil edilir.
-# QEYD: Minimal dəyişikliklərlə default davranış düzəldilib.
 
 import streamlit as st
 import pandas as pd
@@ -9,14 +8,14 @@ from nvu.settings import get_settings
 st.set_page_config(page_title="NVU Arayış Paneli", layout="wide")
 
 # =========================================================
-# 0) Giriş DataFrame-i: tam (filtrsüz) cədvəl
-#    Səndə bu ad fərqli ola bilər: df_clean_full / df_full / df
+# 0) Giriş DataFrame-i: tam (filtrsüz) cədvəl — təhlükəsiz alınma
 # =========================================================
-df_full = (
-    st.session_state.get("df_clean_full")
-    or st.session_state.get("df_full")
-    or st.session_state.get("df")
-)
+df_full = None
+for key in ("df_clean_full", "df_full", "df"):
+    obj = st.session_state.get(key)
+    if obj is not None:
+        df_full = obj
+        break
 
 # Əgər hələ fayl yüklənməyibsə, mesaj verib çıxaq
 if df_full is None or len(df_full) == 0:
@@ -25,8 +24,7 @@ if df_full is None or len(df_full) == 0:
     st.stop()
 
 # =========================================================
-# 1) Tarix sütun adları (column_map-dan)
-#    Yalnız 4 mənbə: R, AB, AF, KOMPOZİT
+# 1) Tarix sütun adları (column_map-dan) — yalnız 4 mənbə
 # =========================================================
 cfg = get_settings()
 colmap = cfg.get("column_map", {}) or {}
@@ -71,15 +69,12 @@ def _date_series_by_source(df: pd.DataFrame, source_key: str) -> pd.Series | Non
     return None
 
 # =========================================================
-# 3) Sidebar UI
-#    DƏYİŞİKLİK #1: İl rejimi default = Hamısı (index=0)
-#    DƏYİŞİKLİK #2: 2 sətirlik helper ilə year multiselect default
-#    DƏYİŞİKLİK #3: İlk açılışda df_clean = df_full (il tətbiq etmə)
+# 3) Sidebar UI  — DƏYİŞİKLİK: default = Hamısı, multiselect helper
 # =========================================================
 st.sidebar.header("Filtr")
 
 # 3.1) Tarix mənbəyi (yalnız 4 variant)
-date_source_options = [SOURCE_LABELS[k] for k in ("R","AB","AF","KOMPOZIT")]
+date_source_options = [SOURCE_LABELS[k] for k in ("R", "AB", "AF", "KOMPOZIT")]
 source_label = st.sidebar.selectbox("Tarix mənbəyi", date_source_options, index=0)
 source_key = [k for k, v in SOURCE_LABELS.items() if v == source_label][0]  # "R"/"AB"/"AF"/"KOMPOZIT"
 
@@ -110,8 +105,8 @@ month_mode = st.sidebar.radio("Ay rejimi", ["Hamısı", "Seçilən aylar"],
                               index=0, horizontal=True, disabled=not has_data)
 
 AZ_MONTHS = {
-    1:"Yan", 2:"Fev", 3:"Mar", 4:"Apr", 5:"May", 6:"İyn",
-    7:"İyl", 8:"Avq", 9:"Sen", 10:"Okt", 11:"Noy", 12:"Dek"
+    1: "Yan", 2: "Fev", 3: "Mar", 4: "Apr", 5: "May", 6: "İyn",
+    7: "İyl", 8: "Avq", 9: "Sen", 10: "Okt", 11: "Noy", 12: "Dek"
 }
 month_opts = list(range(1, 13))
 months_select = st.sidebar.multiselect(
@@ -152,11 +147,11 @@ def _apply_filter(df: pd.DataFrame,
     summary = f"Mənbə: {SOURCE_LABELS[src_key]} | {sum_year} | {sum_mon}"
     return df_out, summary
 
-# DƏYİŞİKLİK #3: İlk açılışda heç bir il tətbiq ETMƏ — hamısı
+# İl və ay üçün tətbiq ediləcək dəyərlər (Hamısı rejimində None qoyuruq)
 if year_mode == "Hamısı":
     years_for_filter = None
 else:
-    years_for_filter = year_select or years_available  # seçilməyibsə də “Seçilən illər”də hamısını götür
+    years_for_filter = year_select or years_available  # “Seçilən illər”də boş qalarsa hamısını götür
 
 months_for_filter = None if month_mode == "Hamısı" else (months_select or month_opts)
 
@@ -174,6 +169,4 @@ st.markdown(f"**Aktiv filtr:** {summary}")
 st.caption(
     f"Sətir sayı: {len(df_clean):,} (cəmi: {len(df_full):,})".replace(",", " ")
 )
-
-# (İstəyə görə burada df_clean-in kiçik ön görüntüsünü göstərə bilərsən)
 # st.dataframe(df_clean.head(10))
