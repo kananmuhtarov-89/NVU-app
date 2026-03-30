@@ -1,1 +1,0 @@
-# NVU Utilizasiya — Streamlit App
