@@ -1,0 +1,60 @@
+{
+  "column_map": {
+    "Utilizatorun adı": "Utilizatorun adı",
+    "Təsnifat": "Təsnifat",
+    "Təsdiqedici sənədin seriyası": "Təsdiqedici sənədin seriyası",
+    "Təhvil aktının seriya nömrəsi": "Təhvil aktının seriya nömrəsi",
+    "Ərizəçinin tam adı": "Ərizəçinin tam adı",
+    "Marka": "Marka",
+    "Model": "Model",
+    "Rəng": "Rəng",
+    "NV qeydiyyat nömrəsi": "NV qeydiyyat nömrəsi",
+    "Buraxılış ili": "Buraxılış ili",
+    "Təsdiq edici sənədin statusu": "Təsdiq edici sənədin statusu",
+    "Təhvil-təslim sənədinin statusu": "Təhvil-təslim sənədinin statusu"
+  },
+  "topN": {
+    "applicant": 50,
+    "brand": 20,
+    "model": 20,
+    "color": 20
+  },
+  "dedup_keys": [
+    "Təhvil aktının seriya nömrəsi",
+    "Təsdiqedici sənədin seriyası",
+    "NV qeydiyyat nömrəsi"
+  ],
+  "status_dict": {
+    "tesdiq": {
+      "Təsdiqedici sənəd yükləndi": [
+        "Təsdiqedici sənəd yükləndi",
+        "Sənəd yükləndi",
+        "Yükləndi"
+      ],
+      "Ləğv edilmiş": [
+        "Ləğv edilmiş",
+        "Legv edilib",
+        "Ləğv olundu"
+      ]
+    },
+    "tehvil": {
+      "Sənəd yükləndi": [
+        "Sənəd yükləndi",
+        "Yükləndi"
+      ],
+      "Qüvvədən düşmüş": [
+        "Qüvvədən düşmüş",
+        "Q.düşmüş",
+        "QüvvədənDüşmüş"
+      ],
+      "Ləğv edilmiş": [
+        "Ləğv edilmiş",
+        "Legv edilib",
+        "Ləğv olundu"
+      ]
+    }
+  },
+  "visuals": {
+    "show": true
+  }
+}
