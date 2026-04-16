@@ -33,7 +33,7 @@ def robust_to_datetime(series: pd.Series) -> pd.Series:
     # generic fallback
     m = dt.isna()
     if m.any():
-        dt2 = pd.to_datetime(s_str[m], errors="coerce", dayfirst=True, infer_datetime_format=True)
+        dt2 = pd.to_datetime(s_str[m], errors="coerce", dayfirst=True)
         dt.loc[m] = dt2
 
     # Excel serial fallback
