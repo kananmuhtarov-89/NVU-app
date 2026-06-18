@@ -1,10 +1,10 @@
+####################
 # pages/12__Faylı_endir.py
-#import pandas as pd
-#import streamlit as st
-#from nvu.export import export_docx, export_xlsx
+
+import os
 import pandas as pd
 import streamlit as st
-import os
+
 from nvu.export import export_docx, export_xlsx
 from nvu.sections import (
     section6_top20_marka,
@@ -12,6 +12,7 @@ from nvu.sections import (
     section8_top20_reng,
     section9_region_counts,
 )
+from nvu.regions import load_region_map
 
 df = st.session_state.get("df_clean")
 if df is None:
