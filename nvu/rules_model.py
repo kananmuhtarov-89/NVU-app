@@ -36,46 +36,46 @@ def normalize_model(marka, model):
     # ---------------- VAZ / LADA ----------------
     if mk in {"VAZ", "LADA"}:
         if has_code(md, {"2101", "21011", "21013"}):
-            return "VAZ-2101 qrup"
+            return "VAZ-2101 ailəsi"
 
         if has_code(md, {"2106", "21061", "21063", "21065"}):
-            return "VAZ-2106 qrup"
+            return "VAZ-2106 ailəsi"
 
         if has_code(md, {"2103", "21033", "2105", "21051", "21053", "2107", "21072", "21074"}):
-            return "VAZ-2103/2105/2107 qrup"
+            return "VAZ-2103/2105/2107 ailəsi"
 
         if has_code(md, {"2102", "2104", "21043"}):
-            return "VAZ-2102/2104 universal qrup"
+            return "VAZ-2102/2104 universal ailəsi"
 
         if has_code(md, {"2108", "21083", "2109", "21093", "21099"}):
-            return "VAZ Samara qrup"
+            return "VAZ Samara ailəsi"
 
         if has_code(md, {"2121", "21213", "21214", "212140", "2131"}) or "NIVA" in md:
-            return "VAZ Niva qrup"
+            return "VAZ Niva ailəsi"
 
         if has_code(md, {"2110", "21100", "21102", "21104", "2111", "2112", "2115", "21154", "2170", "21705", "21723"}) or "PRIORA" in md:
-            return "VAZ-2110/2111/2112/2115 qrup"
+            return "VAZ-2110/2111/2112/2115 ailəsi"
 
     # ---------------- GAZ / VOLQA ----------------
     if mk in {"GAZ", "VOLGA", "VOLQA GAZ 24"}:
         if has_code(md, {"21", "24", "2401", "2402", "2404", "2410", "2411", "2412", "2417", "3102", "31029", "310290", "3110", "31105"}):
-            return "GAZ Volqa qrup"
+            return "GAZ Volqa ailəsi"
 
         if has_code(md, {"2705", "3221", "32213", "322132", "3302", "33021", "330210", "3303", "3307", "3308"}):
-            return "GAZelle/Sobol qrup"
+            return "GAZelle/Sobol ailəsi"
 
         if has_code(md, {"51", "51A", "52", "53", "53A", "53B", "66", "69"}):
-            return "GAZ yük/UAZ tipli qrup"
+            return "GAZ yük/UAZ tipli avtomobillər"
 
     # ---------------- MOSKVICH ----------------
     if mk in {"MOSKVICH", "MOSKVIC", "MOSKVIC"}:
         if has_code(md, {"408", "412", "2140", "21403", "21406", "2141", "21412"}) or "ALEKO" in md:
-            return "Moskvich qrup"
+            return "Moskvich ailəsi"
 
     # ---------------- UAZ ----------------
     if mk == "UAZ":
         if has_code(md, {"469", "469B", "452", "31512", "31514"}) or any(x in md for x in ["HUNTER", "PATRIOT", "BUXANKA", "BUKHANKA"]):
-            return "UAZ qrup"
+            return "UAZ ailəsi"
 
     # ---------------- MERCEDES ----------------
     if mk in {"MERCEDES", "MERCEDES BENZ", "DAIMLER", "DAIMLER BENZ"}:
@@ -85,7 +85,7 @@ def normalize_model(marka, model):
             "208D", "308", "318", "410", "TRAVEGO", "BUS", "AVTOBUS",
             "MIKROAVTOBUS", "YUK"
         ]):
-            return "Mercedes yük/mikroavtobus qrup"
+            return "Mercedes yük/mikroavtobus ailəsi"
 
         # minik Mercedes
         if (
@@ -94,7 +94,7 @@ def normalize_model(marka, model):
             or re.search(r"\b(C|E|S|ML|G|A)\s?\d{2,3}\b", md)
             or any(x in md for x in ["C SERIYA", "E SERIYA", "S SERIYA", "ML SERIYA", "G SERIYA"])
         ):
-            return "Mercedes minik qrup"
+            return "Mercedes minik ailəsi"
 
     # ---------------- BMW ----------------
     if mk == "BMW":
