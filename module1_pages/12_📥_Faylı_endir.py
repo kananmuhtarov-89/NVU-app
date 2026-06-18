@@ -48,16 +48,50 @@ def topn(df_in: pd.DataFrame, cols, out="Say", n=10):
 
 def year_bins_10y(col_name: str):
     if col_name not in df.columns:
-        return pd.DataFrame(columns=["Buraxılış ili","Say"])
-    s = pd.to_numeric(df[col_name], errors="coerce").dropna().astype(int)
-    if s.empty:
-        return pd.DataFrame(columns=["Buraxılış ili","Say"])
-    decade = (s // 10) * 10
-    labels = decade.astype(int).astype(str) + "–" + (decade + 9).astype(str)
-    out = (labels.value_counts()
-                 .sort_index()
-                 .rename_axis("Buraxılış ili")
-                 .reset_index(name="Say"))
+        return pd.DataFrame(columns=["Buraxılış ili", "Say"])
+
+    s = pd.to_numeric(df[col_name], errors="coerce")
+
+    def make_bin(y):
+        if pd.isna(y):
+            return "≤1969"
+
+        y = int(y)
+
+        if y <= 1969:
+            return "≤1969"
+        elif 1970 <= y <= 1979:
+            return "1970–1979"
+        elif 1980 <= y <= 1989:
+            return "1980–1989"
+        elif 1990 <= y <= 1999:
+            return "1990–1999"
+        elif 2000 <= y <= 2009:
+            return "2000–2009"
+        elif 2010 <= y <= 2019:
+            return "2010–2019"
+        else:
+            return "2020–2025"
+
+    labels = s.map(make_bin)
+
+    order = [
+        "≤1969",
+        "1970–1979",
+        "1980–1989",
+        "1990–1999",
+        "2000–2009",
+        "2010–2019",
+        "2020–2025",
+    ]
+
+    out = (
+        labels.value_counts()
+        .reindex(order, fill_value=0)
+        .rename_axis("Buraxılış ili")
+        .reset_index(name="Say")
+    )
+
     return out
 
 # ---------------- Report ----------------
