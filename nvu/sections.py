@@ -82,9 +82,49 @@ def section9_region_counts(df, col_nv, region_map):
         t9["Pay (%)"] = (t9["Say"] * 100 / total).round(2)
     return t9
 def section10_year_bins(df, col_year):
-    years_mapped = dynamic_year_bins(df[col_year])
-    if years_mapped.empty:
-        return pd.DataFrame(columns=["Yaş dövrü","Say"])
-    t10 = years_mapped.value_counts().sort_index().reset_index()
-    t10.columns = ["Yaş dövrü", "Say"]
-    return t10
+    if col_year not in df.columns:
+        return pd.DataFrame(columns=["Yaş dövrü", "Say"])
+
+    s = pd.to_numeric(df[col_year], errors="coerce")
+
+    def make_bin(y):
+        if pd.isna(y):
+            return "≤1969"
+
+        y = int(y)
+
+        if y <= 1969:
+            return "≤1969"
+        elif 1970 <= y <= 1979:
+            return "1970–1979"
+        elif 1980 <= y <= 1989:
+            return "1980–1989"
+        elif 1990 <= y <= 1999:
+            return "1990–1999"
+        elif 2000 <= y <= 2009:
+            return "2000–2009"
+        elif 2010 <= y <= 2019:
+            return "2010–2019"
+        else:
+            return "2020–2025"
+
+    labels = s.map(make_bin)
+
+    order = [
+        "≤1969",
+        "1970–1979",
+        "1980–1989",
+        "1990–1999",
+        "2000–2009",
+        "2010–2019",
+        "2020–2025",
+    ]
+
+    out = (
+        labels.value_counts()
+        .reindex(order, fill_value=0)
+        .rename_axis("Yaş dövrü")
+        .reset_index(name="Say")
+    )
+
+    return out
