@@ -4,9 +4,14 @@
 #from nvu.export import export_docx, export_xlsx
 import pandas as pd
 import streamlit as st
-
+import os
 from nvu.export import export_docx, export_xlsx
-from nvu.sections import section6_top20_marka, section7_top20_model, section8_top20_reng
+from nvu.sections import (
+    section6_top20_marka,
+    section7_top20_model,
+    section8_top20_reng,
+    section9_region_counts,
+)
 
 df = st.session_state.get("df_clean")
 if df is None:
@@ -15,7 +20,9 @@ if df is None:
 
 st.title("Export (DOCX/XLSX)")
 source_filename = st.session_state.get("source_filename", "—")
-
+region_map = load_region_map(
+    os.path.join(os.path.dirname(__file__), "..", "data", "az_region_codes.json")
+)
 # ---------------- Parametrlər ----------------
 TOP_ERIZECI = int(st.session_state.get("param_topN_erizeci", 50))
 TOP_MARKA   = int(st.session_state.get("param_topN_marka", 20))
@@ -138,7 +145,15 @@ report["top_erizeci"] = topn(df, ["Ərizəçinin tam adı"], n=TOP_ERIZECI)
 report["top_marka"] = section6_top20_marka(df, "Marka", n=TOP_MARKA)
 report["top_model"] = section7_top20_model(df, "Marka", "Model", n=TOP_MODEL)
 report["top_reng"] = section8_top20_reng(df, "Rəng").head(TOP_RENG)
-
+# 5) Region paylanması
+if col_exists("NV qeydiyyat nömrəsi"):
+    report["region_counts"] = section9_region_counts(
+        df,
+        "NV qeydiyyat nömrəsi",
+        region_map
+    )
+else:
+    report["region_counts"] = pd.DataFrame(columns=["Region", "Say", "Pay (%)"])
 # 5) Yaş — 10 illik intervallar
 report["year_bins"] = year_bins_10y("Buraxılış ili")
 
