@@ -255,8 +255,10 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
          ["Marka", "Say"], True, None),
         (f"7) Modellər üzrə Top {meta.get('model_N', 10)}", "top_model",
          ["Marka", "Model", "Say"], True, None),
+        #(f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng",
+         #["Rəng", "Say"], True, None),
         (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng",
-         ["Rəng", "Say"], True, None),
+         ["Rəng (uyğunlaşdırılmış)", "Say"], True, None),
         ("9) NV yaşları 10illik intervallarda — yekun", "year_bins",
          ["Buraxılış ili", "Say"], False, None),
     ]
