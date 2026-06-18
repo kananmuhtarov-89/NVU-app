@@ -30,12 +30,35 @@ def section6_top20_marka(df, col_marka):
     t6 = df[col_marka].dropna().map(coerce_str).value_counts().head(20).reset_index()
     t6.columns = [col_marka, "Say"]
     return t6
-def section7_top20_model(df, col_marka, col_model):
+#def section7_top20_model(df, col_marka, col_model):
+   # tmp = df[[col_marka, col_model]].copy()
+    #tmp["Model (uyğunlaşdırılmış)"] = [normalize_model(a, b) for a,b in zip(tmp[col_marka], tmp[col_model])]
+    #t7 = tmp["Model (uyğunlaşdırılmış)"].dropna().value_counts().head(20).reset_index()
+    #t7.columns = ["Model (uyğunlaşdırılmış)", "Say"]   #evvelki versiya
+    #return t7
+def section7_topn_model(df, col_marka, col_model, n=20):
     tmp = df[[col_marka, col_model]].copy()
-    tmp["Model (uyğunlaşdırılmış)"] = [normalize_model(a, b) for a,b in zip(tmp[col_marka], tmp[col_model])]
-    t7 = tmp["Model (uyğunlaşdırılmış)"].dropna().value_counts().head(20).reset_index()
+
+    tmp["Model (uyğunlaşdırılmış)"] = [
+        normalize_model(a, b)
+        for a, b in zip(tmp[col_marka], tmp[col_model])
+    ]
+
+    t7 = (
+        tmp["Model (uyğunlaşdırılmış)"]
+        .dropna()
+        .value_counts()
+        .head(int(n))
+        .reset_index()
+    )
+
     t7.columns = ["Model (uyğunlaşdırılmış)", "Say"]
     return t7
+
+
+# Köhnə çağırışlar pozulmasın deyə saxlayırıq
+def section7_top20_model(df, col_marka, col_model):
+    return section7_topn_model(df, col_marka, col_model, n=20)
 def section8_top20_reng(df, col_reng):
     tmp = df[col_reng].map(normalize_color)
     t8 = tmp.dropna().value_counts().head(20).reset_index()
