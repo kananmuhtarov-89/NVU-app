@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from nvu.export import export_docx, export_xlsx
-from nvu.sections import section7_top20_model, section8_top20_reng
+from nvu.sections import section6_top20_marka, section7_top20_model, section8_top20_reng
 
 df = st.session_state.get("df_clean")
 if df is None:
