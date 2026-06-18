@@ -1,11 +1,16 @@
-import streamlit as st, os
-from nvu.sections import *
-from nvu.regions import load_region_map
+import streamlit as st
+from nvu.sections import section6_top20_marka
+
 df_clean = st.session_state.get("df_clean")
+
 if df_clean is None:
     st.warning("İlk öncə **1) Yüklə / Təmizlə** səhifəsində Excel yükləyin.")
     st.stop()
-region_map = load_region_map(os.path.join(os.path.dirname(__file__), "..", "data", "az_region_codes.json"))
 
-st.title("6) Top-20 Marka")
-st.dataframe(section6_top20_marka(df_clean, "Marka"), use_container_width=True)
+TOP_MARKA = int(st.session_state.get("param_topN_marka", 20))
+
+st.title(f"6) Top-{TOP_MARKA} Marka")
+st.dataframe(
+    section6_top20_marka(df_clean, "Marka", n=TOP_MARKA),
+    use_container_width=True
+)
