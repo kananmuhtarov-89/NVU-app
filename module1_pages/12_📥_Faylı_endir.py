@@ -102,10 +102,7 @@ else:
 # 4) Top-N cədvəlləri
 report["top_erizeci"] = topn(df, ["Ərizəçinin tam adı"], n=TOP_ERIZECI)
 report["top_marka"]   = topn(df, ["Marka"], n=TOP_MARKA)
-#report["top_model"]   = topn(df, ["Marka","Model"], n=TOP_MODEL)
-#report["top_reng"]    = topn(df, ["Rəng"], n=TOP_RENG
 report["top_model"] = section7_topn_model(df, "Marka", "Model", n=TOP_MODEL)
-#from nvu.sections import section8_top20_reng
 report["top_reng"] = section8_top20_reng(df, "Rəng").head(TOP_RENG)
 
 # 5) Yaş — 10 illik intervallar
