@@ -278,8 +278,10 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
 
             for col in dx.columns:
                 if pd.api.types.is_numeric_dtype(dx[col]):
-                    dx[col] = pd.to_numeric(dx[col], errors="coerce").fillna(0).astype(int)
-
+                    if col == "Pay (%)":
+                        dx[col] = pd.to_numeric(dx[col], errors="coerce").fillna(0).round(2)
+                    else:
+                        dx[col] = pd.to_numeric(dx[col], errors="coerce").fillna(0).astype(int)
             if not dx.empty:
                 _add_table(doc, _subset(dx, pref), add_rownum=add_no)
             else:
