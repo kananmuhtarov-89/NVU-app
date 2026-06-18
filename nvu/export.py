@@ -261,7 +261,9 @@ def export_docx(report: Dict[str, Any], source_filename: str = "") -> bytes:
          #["Rəng", "Say"], True, None),
         (f"8) Rəng Top {meta.get('reng_N', 10)}", "top_reng",
          ["Rəng (uyğunlaşdırılmış)", "Say"], True, None),
-        ("9) NV yaşları 10illik intervallarda — yekun", "year_bins",
+        ("9) Region paylanması (NV nömrəsinə görə) — yekun", "region_counts",
+         ["Region", "Say", "Pay (%)"], True, None),
+        ("10) NV-lərin buraxılış ili üzrə strukturu — yekun", "year_bins",
          ["Buraxılış ili", "Say"], False, None),
     ]
     for title, key, pref, add_no, drop_keys in sections:
@@ -368,6 +370,7 @@ def export_xlsx(report: dict) -> bytes:
             ("top_marka",            "Top marka"),
             ("top_model",            "Top model"),
             ("top_reng",             "Top rəng"),
+            ("region_counts",        "Regionlar"),
             ("year_bins",            "İllər üzrə"),
         ]:
             df = report.get(key)
