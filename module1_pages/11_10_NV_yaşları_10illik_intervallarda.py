@@ -7,5 +7,6 @@ if df_clean is None:
     st.stop()
 region_map = load_region_map(os.path.join(os.path.dirname(__file__), "..", "data", "az_region_codes.json"))
 
-st.title("10) NV-lərin yaş strukturu (10 illik dövrlərlə)")
+#st.title("10) NV-lərin yaş strukturu (10 illik dövrlərlə)")
+st.title("10) NV-lərin buraxılış ili üzrə strukturu")
 st.dataframe(section10_year_bins(df_clean, "Buraxılış ili"), use_container_width=True)
