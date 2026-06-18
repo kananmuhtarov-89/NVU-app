@@ -1,7 +1,12 @@
 # pages/12__Faylı_endir.py
+#import pandas as pd
+#import streamlit as st
+#from nvu.export import export_docx, export_xlsx
 import pandas as pd
 import streamlit as st
+
 from nvu.export import export_docx, export_xlsx
+from nvu.sections import section7_topn_model, section8_top20_reng
 
 df = st.session_state.get("df_clean")
 if df is None:
@@ -97,9 +102,10 @@ else:
 # 4) Top-N cədvəlləri
 report["top_erizeci"] = topn(df, ["Ərizəçinin tam adı"], n=TOP_ERIZECI)
 report["top_marka"]   = topn(df, ["Marka"], n=TOP_MARKA)
-report["top_model"]   = topn(df, ["Marka","Model"], n=TOP_MODEL)
-#report["top_reng"]    = topn(df, ["Rəng"], n=TOP_RENG)
-from nvu.sections import section8_top20_reng
+#report["top_model"]   = topn(df, ["Marka","Model"], n=TOP_MODEL)
+#report["top_reng"]    = topn(df, ["Rəng"], n=TOP_RENG
+report["top_model"] = section7_topn_model(df, "Marka", "Model", n=TOP_MODEL)
+#from nvu.sections import section8_top20_reng
 report["top_reng"] = section8_top20_reng(df, "Rəng").head(TOP_RENG)
 
 # 5) Yaş — 10 illik intervallar
