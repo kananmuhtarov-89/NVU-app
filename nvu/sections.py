@@ -4,6 +4,7 @@ from .rules_status import ALLOWED_3, ALLOWED_4, status_totals
 from .rules_model import normalize_model
 from .rules_color import normalize_color
 from .regions import extract_region_from_nv
+from .rules_brand import normalize_brand
 def section1_utilizator(df, col_utilizator, col_nv):
     tmp = df[[col_utilizator, col_nv]].copy()
     tmp[col_nv+"_norm"] = tmp[col_nv].map(normalize_code)
@@ -26,8 +27,20 @@ def section5_top50_erizeci(df, col_erizeci):
     t5.columns = [col_erizeci, "Say"]
     t5.insert(0, "Sıra №", range(1, len(t5)+1))
     return t5
-def section6_top20_marka(df, col_marka):
-    t6 = df[col_marka].dropna().map(coerce_str).value_counts().head(20).reset_index()
+def section6_top20_marka(df, col_marka, n=20):
+    if col_marka not in df.columns:
+        return pd.DataFrame(columns=[col_marka, "Say"])
+
+    t6 = (
+        df[col_marka]
+        .dropna()
+        .map(normalize_brand)
+        .dropna()
+        .value_counts()
+        .head(int(n))
+        .reset_index()
+    )
+
     t6.columns = [col_marka, "Say"]
     return t6
 #def section7_top20_model(df, col_marka, col_model):
