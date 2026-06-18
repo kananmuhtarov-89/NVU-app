@@ -47,6 +47,21 @@ def robust_to_datetime(series: pd.Series) -> pd.Series:
             dt.loc[valid.index] = base + pd.to_timedelta(s_num[valid], unit="D")
     return dt
 
+
+def normalize_nv_code(x):
+    """
+    NV qeydiyyat nömrəsini standart formaya salır.
+    Məsələn:
+    61AB-153  -> 61AB153
+    61 AB 153 -> 61AB153
+    """
+    if pd.isna(x):
+        return None
+
+    s = str(x).strip().upper()
+    s = re.sub(r"[^A-Z0-9]", "", s)
+    return s if s else None
+
 # ---- Dəqiq başlıqlar ----
 TITLE_R  = "Müraciət üzrə son əməliyyat tarixi"
 TITLE_AB = "Təhvil-təslim üzrə son əməliyyat"
@@ -83,9 +98,36 @@ if uploaded:
     if col_AF: df_raw["dt_AF"] = robust_to_datetime(df_raw[col_AF])
     else:      df_raw["dt_AF"] = pd.NaT
 
-    # 4) NV üzrə **ən yeni R** (fallbacks YOXDUR)
-    df_sorted = df_raw.sort_values("dt_R", ascending=False, na_position="last")
-    df = df_sorted.drop_duplicates(subset=[NV_COL], keep="first").copy()
+    # 4) NV üzrə dedup — normallaşdırılmış NV + ən son KOMPOZİT tarix
+    # Məntiq: eyni NV bir neçə dəfə varsa, R/AB/AF tarixlərindən ən yenisi olan sətir saxlanılır.
+    df_raw["NV_norm"] = df_raw[NV_COL].map(normalize_nv_code)
+
+    dt_cols_raw = [c for c in ["dt_R", "dt_AB", "dt_AF"] if c in df_raw.columns]
+    for c in dt_cols_raw:
+        df_raw[c] = pd.to_datetime(df_raw[c], errors="coerce")
+
+    if dt_cols_raw:
+        df_raw["dt_KOMPOZIT"] = df_raw[dt_cols_raw].max(axis=1)
+    else:
+        df_raw["dt_KOMPOZIT"] = pd.NaT
+
+    # Eyni NV üçün əvvəl ən son ümumi əməliyyat, sonra ehtiyat olaraq R tarixi əsas götürülür.
+    df_sorted = df_raw.sort_values(
+        ["dt_KOMPOZIT", "dt_R"],
+        ascending=[False, False],
+        na_position="last"
+    )
+
+    # NV_norm boş olan sətirlərdə dublikat silmə təhlükəli ola bilər.
+    # Ona görə boş NV_norm üçün unikal köməkçi açar yaradılır ki, belə sətirlər səhvən bir-birinə qarışmasın.
+    df_sorted["NV_dedup_key"] = df_sorted["NV_norm"]
+    missing_nv_mask = df_sorted["NV_dedup_key"].isna()
+    df_sorted.loc[missing_nv_mask, "NV_dedup_key"] = (
+        "__MISSING_NV__" + df_sorted.loc[missing_nv_mask].index.astype(str)
+    )
+
+    # Eyni normallaşdırılmış NV-dən yalnız ən aktual sətri saxla
+    df = df_sorted.drop_duplicates(subset=["NV_dedup_key"], keep="first").copy()
 
     # 5) İl/Ay sahələri
     for key in ["R","AB","AF"]:
@@ -136,7 +178,7 @@ if uploaded:
     st.session_state["filter_initialized"] = False
 
     # 9) Yekun cədvəl
-    st.success(f"Təmizləndi. Sətirlər (dedup): {len(df)} | Unikal NV: {df[NV_COL].nunique()}")
+    st.success(f"Təmizləndi. Sətirlər (dedup): {len(df)} | Unikal NV: {df["NV_norm"].nunique()}")
     st.caption("Tarix sütunlarının əhatəsi və min/max dəyərləri:")
 
     rows = [
@@ -148,7 +190,7 @@ if uploaded:
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     # 10) Preview
-    st.dataframe(df[[NV_COL, "dt_R","dt_AB","dt_AF"]].head(50), use_container_width=True)
+    st.dataframe(df[[NV_COL, "NV_norm", "dt_R", "dt_AB", "dt_AF", "dt_KOMPOZIT"]].head(50), use_container_width=True)
 
 else:
     st.info("Fayl yükləyin.")
